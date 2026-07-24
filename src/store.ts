@@ -1,9 +1,139 @@
-import{mkdir,readFile,rename,writeFile}from"node:fs/promises";import{dirname}from"node:path";
-export interface PendingVerification{discordUserId:string;walletAddress:string;code:string;expiresAt:number}
-export interface RoleTier{roleId:string;nftCount:number}export interface GuildSetup{channelId:string;contractAddress:string;tiers:RoleTier[]}
-interface Data{pending:Record<string,PendingVerification>;verified:Record<string,{discordUserId:string;walletAddress:string;verifiedAt:number}>;guildSetups:Record<string,GuildSetup>}
-export class VerificationStore{private data:Data={pending:{},verified:{},guildSetups:{}};private queue=Promise.resolve();constructor(private file:string){}
-async initialize(){try{const p=JSON.parse(await readFile(this.file,"utf8"))as Partial<Data>;this.data={pending:p.pending??{},verified:p.verified??{},guildSetups:p.guildSetups??{}}}catch(e){if((e as NodeJS.ErrnoException).code!=="ENOENT")throw e;await this.save()}}
-getPending(id:string){const p=this.data.pending[id];return p?{...p}:undefined}getGuildSetup(id:string){const s=this.data.guildSetups[id];return s?{...s,tiers:s.tiers.map(t=>({...t}))}:undefined}walletOwner(w:string){return this.data.verified[w.toLowerCase()]?.discordUserId}
-async setGuildSetup(id:string,s:GuildSetup){this.data.guildSetups[id]=s;await this.save()}async setPending(p:PendingVerification){this.data.pending[p.discordUserId]=p;await this.save()}async removePending(id:string){delete this.data.pending[id];await this.save()}async markVerified(p:PendingVerification){const w=p.walletAddress.toLowerCase();this.data.verified[w]={discordUserId:p.discordUserId,walletAddress:w,verifiedAt:Date.now()};delete this.data.pending[p.discordUserId];await this.save()}
-private async save(){this.queue=this.queue.then(async()=>{await mkdir(dirname(this.file),{recursive:true});const t=this.file+".tmp";await writeFile(t,JSON.stringify(this.data,null,2));await rename(t,this.file)});await this.queue}}
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
+export interface PendingVerification {
+  discordUserId: string;
+  walletAddress: string;
+  code: string;
+  expiresAt: number;
+}
+
+export interface RoleTier {
+  roleId: string;
+  nftCount: number;
+}
+
+export interface GuildSetup {
+  channelId: string;
+  contractAddress: string;
+  tiers: RoleTier[];
+}
+
+export interface WalletSubmissionSetup {
+  channelId: string;
+  allowedRoleIds: string[];
+  opensAt: number;
+  closesAt: number;
+}
+
+export interface WalletSubmissionEntry {
+  discordUserId: string;
+  discordUsername: string;
+  walletAddress: string;
+  submittedAt: number;
+}
+
+interface Data {
+  pending: Record<string, PendingVerification>;
+  verified: Record<string, { discordUserId: string; walletAddress: string; verifiedAt: number }>;
+  guildSetups: Record<string, GuildSetup>;
+  walletSubmissionSetups: Record<string, WalletSubmissionSetup>;
+  walletSubmissions: Record<string, Record<string, WalletSubmissionEntry>>;
+}
+
+export class VerificationStore {
+  private data: Data = {
+    pending: {},
+    verified: {},
+    guildSetups: {},
+    walletSubmissionSetups: {},
+    walletSubmissions: {},
+  };
+
+  private queue = Promise.resolve();
+
+  constructor(private file: string) {}
+
+  async initialize() {
+    try {
+      const p = JSON.parse(await readFile(this.file, "utf8")) as Partial<Data>;
+      this.data = {
+        pending: p.pending ?? {},
+        verified: p.verified ?? {},
+        guildSetups: p.guildSetups ?? {},
+        walletSubmissionSetups: p.walletSubmissionSetups ?? {},
+        walletSubmissions: p.walletSubmissions ?? {},
+      };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      await this.save();
+    }
+  }
+
+  getPending(id: string) {
+    const p = this.data.pending[id];
+    return p ? { ...p } : undefined;
+  }
+
+  getGuildSetup(id: string) {
+    const s = this.data.guildSetups[id];
+    return s ? { ...s, tiers: s.tiers.map((t) => ({ ...t })) } : undefined;
+  }
+
+  walletOwner(w: string) {
+    return this.data.verified[w.toLowerCase()]?.discordUserId;
+  }
+
+  getWalletSubmissionSetup(guildId: string) {
+    const s = this.data.walletSubmissionSetups[guildId];
+    return s ? { ...s, allowedRoleIds: [...s.allowedRoleIds] } : undefined;
+  }
+
+  getWalletSubmissions(guildId: string) {
+    return Object.values(this.data.walletSubmissions[guildId] ?? {}).map((entry) => ({ ...entry }));
+  }
+
+  async setGuildSetup(id: string, s: GuildSetup) {
+    this.data.guildSetups[id] = s;
+    await this.save();
+  }
+
+  async setPending(p: PendingVerification) {
+    this.data.pending[p.discordUserId] = p;
+    await this.save();
+  }
+
+  async removePending(id: string) {
+    delete this.data.pending[id];
+    await this.save();
+  }
+
+  async markVerified(p: PendingVerification) {
+    const w = p.walletAddress.toLowerCase();
+    this.data.verified[w] = { discordUserId: p.discordUserId, walletAddress: w, verifiedAt: Date.now() };
+    delete this.data.pending[p.discordUserId];
+    await this.save();
+  }
+
+  async setWalletSubmissionSetup(guildId: string, setup: WalletSubmissionSetup) {
+    this.data.walletSubmissionSetups[guildId] = setup;
+    this.data.walletSubmissions[guildId] = {};
+    await this.save();
+  }
+
+  async addWalletSubmission(guildId: string, entry: WalletSubmissionEntry) {
+    this.data.walletSubmissions[guildId] ??= {};
+    this.data.walletSubmissions[guildId][entry.discordUserId] = entry;
+    await this.save();
+  }
+
+  private async save() {
+    this.queue = this.queue.then(async () => {
+      await mkdir(dirname(this.file), { recursive: true });
+      const t = this.file + ".tmp";
+      await writeFile(t, JSON.stringify(this.data, null, 2));
+      await rename(t, this.file);
+    });
+    await this.queue;
+  }
+}
