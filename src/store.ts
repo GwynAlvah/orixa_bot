@@ -23,7 +23,7 @@ export interface WalletSubmissionSetup {
   channelId: string;
   allowedRoleIds: string[];
   opensAt: number;
-  closesAt: number;
+  closesAt: number | null;
 }
 
 export interface WalletSubmissionEntry {
@@ -119,6 +119,15 @@ export class VerificationStore {
     this.data.walletSubmissionSetups[guildId] = setup;
     this.data.walletSubmissions[guildId] = {};
     await this.save();
+  }
+
+
+  async closeWalletSubmission(guildId: string) {
+    const setup = this.data.walletSubmissionSetups[guildId];
+    if (!setup) return false;
+    setup.closesAt = Date.now();
+    await this.save();
+    return true;
   }
 
   async addWalletSubmission(guildId: string, entry: WalletSubmissionEntry) {

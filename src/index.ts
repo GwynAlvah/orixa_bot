@@ -70,6 +70,11 @@ async function handle(i: Interaction) {
     return;
   }
 
+  if (i.isChatInputCommand() && i.commandName === "close-wallet-submission") {
+    await handleCloseWalletSubmission(i);
+    return;
+  }
+
   if (i.isButton() && i.customId === VERIFY) {
     const m = new ModalBuilder().setCustomId(HOLDER_MODAL).setTitle("NFT holder verification");
     const x = new TextInputBuilder()
@@ -208,7 +213,7 @@ async function handleSetupWalletSubmission(i: Interaction) {
   }
 
   const channel = i.options.getChannel("channel", true, [ChannelType.GuildText]);
-  const durationMinutes = i.options.getInteger("duration-minutes", true);
+  const durationMinutes = i.options.getInteger("duration-minutes");
   const allowedRoleIds = parseRoleIds(i.options.getString("allow-roles"));
   const missingRoleId = allowedRoleIds.find((roleId) => !i.guild!.roles.cache.has(roleId));
 
@@ -218,7 +223,7 @@ async function handleSetupWalletSubmission(i: Interaction) {
   }
 
   const now = Date.now();
-  const closesAt = now + durationMinutes * 60_000;
+  const closesAt = durationMinutes ? now + durationMinutes * 60_000 : null;
   await store.setWalletSubmissionSetup(i.guildId, {
     channelId: channel.id,
     allowedRoleIds,
@@ -227,7 +232,8 @@ async function handleSetupWalletSubmission(i: Interaction) {
   });
 
   const roleLine = allowedRoleIds.length ? allowedRoleIds.map((r) => "<@&" + r + ">").join(", ") : "Everyone";
-  const closeTimestamp = Math.floor(closesAt / 1000);
+  const closeTimestamp = closesAt ? Math.floor(closesAt / 1000) : null;
+  const closeLine = closeTimestamp ? "**Closes**: <t:" + closeTimestamp + ":F> (<t:" + closeTimestamp + ":R>)" : "**Closes**: No time limit";
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle("Submit your wallet")
@@ -236,7 +242,7 @@ async function handleSetupWalletSubmission(i: Interaction) {
         "Click **Submit wallet** and enter your EVM wallet address.",
         "",
         "**Allowed entrants**: " + roleLine,
-        "**Closes**: <t:" + closeTimestamp + ":F> (<t:" + closeTimestamp + ":R>)",
+        closeLine,
         "",
         "One entry per Discord account. Submitting again updates your wallet.",
       ].join("\n"),
@@ -247,6 +253,23 @@ async function handleSetupWalletSubmission(i: Interaction) {
 
   await channel.send({ embeds: [embed], components: [row] });
   await i.reply({ content: "Wallet submission panel posted in <#" + channel.id + ">.", flags: MessageFlags.Ephemeral });
+}
+
+
+async function handleCloseWalletSubmission(i: Interaction) {
+  if (!i.isChatInputCommand()) return;
+  if (!i.inGuild() || !i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await i.reply({ content: "Manage Server permission is required.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const closed = await store.closeWalletSubmission(i.guildId);
+  if (!closed) {
+    await i.reply({ content: "Wallet submissions are not configured.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await i.reply({ content: "Wallet submissions are now closed. Existing entries were kept and can still be exported.", flags: MessageFlags.Ephemeral });
 }
 
 async function handleExportWalletSubmissions(i: Interaction) {
@@ -337,7 +360,7 @@ async function handleWalletSubmitButton(i: Interaction) {
     return;
   }
 
-  if (Date.now() > setup.closesAt) {
+  if (setup.closesAt && Date.now() > setup.closesAt) {
     await i.reply({ content: "Wallet submissions are closed.", flags: MessageFlags.Ephemeral });
     return;
   }
@@ -373,7 +396,7 @@ async function handleWalletSubmitModal(i: Interaction) {
     return;
   }
 
-  if (Date.now() > setup.closesAt) {
+  if (setup.closesAt && Date.now() > setup.closesAt) {
     await i.reply({ content: "Wallet submissions are closed.", flags: MessageFlags.Ephemeral });
     return;
   }

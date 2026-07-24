@@ -26,13 +26,15 @@ Admins can run `/setup-wallet-submission` to post a wallet submission panel.
 Required options:
 
 - `channel`: where the embed and submit button are posted.
-- `duration-minutes`: how long submissions stay open.
+- `duration-minutes`: optional. If omitted, submissions stay open with no time limit.
 
 Optional options:
 
 - `allow-roles`: optional role mentions or role IDs separated by spaces or commas. If set, only members with at least one of those roles can submit. If empty, everyone can submit.
 
-For `allow-roles`, paste roles into the input like `@Holder @OG @Whitelist` or paste role IDs like `123456789012345678, 234567890123456789`. Users click **Submit wallet**, enter an EVM wallet address, and receive an ephemeral confirmation. Each Discord account has one entry; submitting again updates that user’s wallet. Running `/setup-wallet-submission` again starts a new submission window and clears the previous wallet submission entries.
+For `allow-roles`, paste roles into the input like `@Holder @OG @Whitelist` or paste role IDs like `123456789012345678, 234567890123456789`. Users click **Submit wallet**, enter an EVM wallet address, and receive an ephemeral confirmation. Each Discord account has one entry; submitting again updates that user’s wallet. Running `/setup-wallet-submission` again starts a new submission window and clears the previous wallet submission entries. If `duration-minutes` is omitted, the submission window has no automatic close time.
+
+Admins can run `/close-wallet-submission` to close the current submission window immediately without deleting existing entries.
 
 Admins can run `/export-wallet-submissions` to receive `wallet-submissions.csv` as an ephemeral attachment.
 

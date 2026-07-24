@@ -33,7 +33,7 @@ const walletSubmission = new SlashCommandBuilder()
     o.setName("channel").setDescription("Submission channel").addChannelTypes(ChannelType.GuildText).setRequired(true),
   )
   .addIntegerOption((o) =>
-    o.setName("duration-minutes").setDescription("How long submissions stay open").setMinValue(1).setRequired(true),
+    o.setName("duration-minutes").setDescription("Optional: how long submissions stay open").setMinValue(1).setRequired(false),
   )
   .addStringOption((o) =>
     o
@@ -48,10 +48,16 @@ const exportWalletSubmissions = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .setDMPermission(false);
 
+const closeWalletSubmission = new SlashCommandBuilder()
+  .setName("close-wallet-submission")
+  .setDescription("Close the current wallet submission window")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDMPermission(false);
+
 await new REST({ version: "10" })
   .setToken(req("DISCORD_TOKEN"))
   .put(Routes.applicationGuildCommands(req("DISCORD_CLIENT_ID"), req("DISCORD_GUILD_ID")), {
-    body: [verification.toJSON(), walletSubmission.toJSON(), exportWalletSubmissions.toJSON()],
+    body: [verification.toJSON(), walletSubmission.toJSON(), exportWalletSubmissions.toJSON(), closeWalletSubmission.toJSON()],
   });
 
 console.log("Commands deployed");
