@@ -21,20 +21,25 @@ Production follow-up work should periodically recheck holders and remove roles a
 
 ## Wallet submissions
 
-Admins can run `/setup-wallet-submission` to post a wallet submission panel.
+Admins can run `/setup-wallet-submission` multiple times to create multiple independent wallet submission categories.
 
 Required options:
 
+- `name`: category name, for example `og`, `wl`, `collab-a`, or `raffle-1`.
 - `channel`: where the embed and submit button are posted.
-- `duration-minutes`: optional. If omitted, submissions stay open with no time limit.
 
 Optional options:
 
+- `duration-minutes`: optional. If omitted, submissions stay open with no time limit.
 - `allow-roles`: optional role mentions or role IDs separated by spaces or commas. If set, only members with at least one of those roles can submit. If empty, everyone can submit.
 
-For `allow-roles`, paste roles into the input like `@Holder @OG @Whitelist` or paste role IDs like `123456789012345678, 234567890123456789`. Users click **Submit wallet**, enter an EVM wallet address, and receive an ephemeral confirmation. Each Discord account has one entry; submitting again updates that user’s wallet. Running `/setup-wallet-submission` again starts a new submission window and clears the previous wallet submission entries. If `duration-minutes` is omitted, the submission window has no automatic close time.
+For `allow-roles`, paste roles into the input like `@Holder @OG @Whitelist` or paste role IDs like `123456789012345678, 234567890123456789`.
 
-Admins can run `/close-wallet-submission` to close the current submission window immediately without deleting existing entries.
+Each posted panel is tied to its own `name`, channel, role limits, close time, and entries. Users click **Submit wallet**, enter an EVM wallet address, and receive an ephemeral confirmation. Each Discord account has one entry per category; submitting again updates that user’s wallet for that category.
 
-Admins can run `/export-wallet-submissions` to receive `wallet-submissions.csv` as an ephemeral attachment.
+Running `/setup-wallet-submission` again with the same `name` resets that category and clears that category’s previous entries. Other categories are not affected.
+
+Admins can run `/close-wallet-submission name:<category>` to close one submission category immediately without deleting existing entries.
+
+Admins can run `/export-wallet-submissions name:<category>` to receive that category’s CSV as an ephemeral attachment.
 

@@ -128,12 +128,12 @@ async function handle(i: Interaction) {
     return;
   }
 
-  if (i.isButton() && i.customId === WALLET_SUBMIT) {
+  if (i.isButton() && i.customId.startsWith(WALLET_SUBMIT + ":")) {
     await handleWalletSubmitButton(i);
     return;
   }
 
-  if (i.isModalSubmit() && i.customId === WALLET_MODAL) {
+  if (i.isModalSubmit() && i.customId.startsWith(WALLET_MODAL + ":")) {
     await handleWalletSubmitModal(i);
     return;
   }
@@ -212,6 +212,13 @@ async function handleSetupWalletSubmission(i: Interaction) {
     return;
   }
 
+  const rawName = i.options.getString("name", true);
+  const submissionKey = normalizeSubmissionKey(rawName);
+  if (!submissionKey) {
+    await i.reply({ content: "Use a category name with letters, numbers, dashes, or underscores.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
   const channel = i.options.getChannel("channel", true, [ChannelType.GuildText]);
   const durationMinutes = i.options.getInteger("duration-minutes");
   const allowedRoleIds = parseRoleIds(i.options.getString("allow-roles"));
@@ -224,7 +231,8 @@ async function handleSetupWalletSubmission(i: Interaction) {
 
   const now = Date.now();
   const closesAt = durationMinutes ? now + durationMinutes * 60_000 : null;
-  await store.setWalletSubmissionSetup(i.guildId, {
+  await store.setWalletSubmissionSetup(i.guildId, submissionKey, {
+    name: rawName,
     channelId: channel.id,
     allowedRoleIds,
     opensAt: now,
@@ -236,7 +244,7 @@ async function handleSetupWalletSubmission(i: Interaction) {
   const closeLine = closeTimestamp ? "**Closes**: <t:" + closeTimestamp + ":F> (<t:" + closeTimestamp + ":R>)" : "**Closes**: No time limit";
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle("Submit your wallet")
+    .setTitle("Submit your wallet: " + rawName)
     .setDescription(
       [
         "Click **Submit wallet** and enter your EVM wallet address.",
@@ -244,15 +252,17 @@ async function handleSetupWalletSubmission(i: Interaction) {
         "**Allowed entrants**: " + roleLine,
         closeLine,
         "",
-        "One entry per Discord account. Submitting again updates your wallet.",
+        "**Category**: `" + submissionKey + "`",
+        "One entry per Discord account per category. Submitting again updates your wallet for this category.",
       ].join("\n"),
     );
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(WALLET_SUBMIT).setLabel("Submit wallet").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(WALLET_SUBMIT + ":" + submissionKey).setLabel("Submit wallet").setStyle(ButtonStyle.Primary),
   );
 
-  await channel.send({ embeds: [embed], components: [row] });
-  await i.reply({ content: "Wallet submission panel posted in <#" + channel.id + ">.", flags: MessageFlags.Ephemeral });
+  const message = await channel.send({ embeds: [embed], components: [row] });
+  await store.updateWalletSubmissionMessage(i.guildId, submissionKey, message.id);
+  await i.reply({ content: "Wallet submission `" + submissionKey + "` posted in <#" + channel.id + ">.", flags: MessageFlags.Ephemeral });
 }
 
 
@@ -263,13 +273,14 @@ async function handleCloseWalletSubmission(i: Interaction) {
     return;
   }
 
-  const closed = await store.closeWalletSubmission(i.guildId);
+  const submissionKey = normalizeSubmissionKey(i.options.getString("name", true));
+  const closed = await store.closeWalletSubmission(i.guildId, submissionKey);
   if (!closed) {
-    await i.reply({ content: "Wallet submissions are not configured.", flags: MessageFlags.Ephemeral });
+    await i.reply({ content: "Wallet submission `" + submissionKey + "` is not configured.", flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await i.reply({ content: "Wallet submissions are now closed. Existing entries were kept and can still be exported.", flags: MessageFlags.Ephemeral });
+  await i.reply({ content: "Wallet submission `" + submissionKey + "` is now closed. Existing entries were kept and can still be exported.", flags: MessageFlags.Ephemeral });
 }
 
 async function handleExportWalletSubmissions(i: Interaction) {
@@ -279,7 +290,14 @@ async function handleExportWalletSubmissions(i: Interaction) {
     return;
   }
 
-  const entries = store.getWalletSubmissions(i.guildId);
+  const submissionKey = normalizeSubmissionKey(i.options.getString("name", true));
+  const setup = store.getWalletSubmissionSetup(i.guildId, submissionKey);
+  if (!setup) {
+    await i.reply({ content: "Wallet submission `" + submissionKey + "` is not configured.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const entries = store.getWalletSubmissions(i.guildId, submissionKey);
   const rows = [
     ["discord_user_id", "discord_username", "wallet_address", "submitted_at_iso", "submitted_at_unix"],
     ...entries
@@ -287,9 +305,9 @@ async function handleExportWalletSubmissions(i: Interaction) {
       .map((e) => [e.discordUserId, e.discordUsername, e.walletAddress, new Date(e.submittedAt).toISOString(), String(e.submittedAt)]),
   ];
   const csv = rows.map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
-  const file = new AttachmentBuilder(Buffer.from(csv, "utf8"), { name: "wallet-submissions.csv" });
+  const file = new AttachmentBuilder(Buffer.from(csv, "utf8"), { name: "wallet-submissions-" + submissionKey + ".csv" });
 
-  await i.reply({ content: "Exported " + entries.length + " wallet submission(s).", files: [file], flags: MessageFlags.Ephemeral });
+  await i.reply({ content: "Exported " + entries.length + " wallet submission(s) for `" + submissionKey + "`.", files: [file], flags: MessageFlags.Ephemeral });
 }
 
 async function handleHolderConfirm(i: Interaction) {
@@ -354,9 +372,10 @@ async function handleWalletSubmitButton(i: Interaction) {
     return;
   }
 
-  const setup = store.getWalletSubmissionSetup(i.guildId);
+  const submissionKey = customIdSuffix(i.customId, WALLET_SUBMIT);
+  const setup = store.getWalletSubmissionSetup(i.guildId, submissionKey);
   if (!setup) {
-    await i.reply({ content: "Wallet submissions are not configured.", flags: MessageFlags.Ephemeral });
+    await i.reply({ content: "Wallet submission `" + submissionKey + "` is not configured.", flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -370,7 +389,7 @@ async function handleWalletSubmitButton(i: Interaction) {
     return;
   }
 
-  const m = new ModalBuilder().setCustomId(WALLET_MODAL).setTitle("Submit wallet address");
+  const m = new ModalBuilder().setCustomId(WALLET_MODAL + ":" + submissionKey).setTitle("Submit wallet address");
   const x = new TextInputBuilder()
     .setCustomId(WALLET_INPUT)
     .setLabel("Your EVM wallet address")
@@ -390,9 +409,10 @@ async function handleWalletSubmitModal(i: Interaction) {
     return;
   }
 
-  const setup = store.getWalletSubmissionSetup(i.guildId);
+  const submissionKey = customIdSuffix(i.customId, WALLET_MODAL);
+  const setup = store.getWalletSubmissionSetup(i.guildId, submissionKey);
   if (!setup) {
-    await i.reply({ content: "Wallet submissions are not configured.", flags: MessageFlags.Ephemeral });
+    await i.reply({ content: "Wallet submission `" + submissionKey + "` is not configured.", flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -412,16 +432,25 @@ async function handleWalletSubmitModal(i: Interaction) {
     return;
   }
 
-  await store.addWalletSubmission(i.guildId, {
+  await store.addWalletSubmission(i.guildId, submissionKey, {
     discordUserId: i.user.id,
     discordUsername: i.user.tag,
     walletAddress: wallet,
     submittedAt: Date.now(),
   });
 
-  await i.reply({ content: "Wallet submitted: `" + wallet + "`", flags: MessageFlags.Ephemeral });
+  await i.reply({ content: "Wallet submitted for `" + submissionKey + "`: `" + wallet + "`", flags: MessageFlags.Ephemeral });
 }
 
+
+
+function normalizeSubmissionKey(input: string) {
+  return input.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
+}
+
+function customIdSuffix(customId: string, prefix: string) {
+  return customId.slice(prefix.length + 1);
+}
 
 function parseRoleIds(input: string | null) {
   if (!input) return [];

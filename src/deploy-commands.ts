@@ -29,6 +29,9 @@ const walletSubmission = new SlashCommandBuilder()
   .setDescription("Post a wallet submission panel")
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .setDMPermission(false)
+  .addStringOption((o) =>
+    o.setName("name").setDescription("Submission category name, like og, whitelist, collab-a").setMaxLength(32).setRequired(true),
+  )
   .addChannelOption((o) =>
     o.setName("channel").setDescription("Submission channel").addChannelTypes(ChannelType.GuildText).setRequired(true),
   )
@@ -46,13 +49,19 @@ const exportWalletSubmissions = new SlashCommandBuilder()
   .setName("export-wallet-submissions")
   .setDescription("Export wallet submissions as a CSV file")
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-  .setDMPermission(false);
+  .setDMPermission(false)
+  .addStringOption((o) =>
+    o.setName("name").setDescription("Submission category name to export").setMaxLength(32).setRequired(true),
+  );
 
 const closeWalletSubmission = new SlashCommandBuilder()
   .setName("close-wallet-submission")
-  .setDescription("Close the current wallet submission window")
+  .setDescription("Close a wallet submission window")
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-  .setDMPermission(false);
+  .setDMPermission(false)
+  .addStringOption((o) =>
+    o.setName("name").setDescription("Submission category name to close").setMaxLength(32).setRequired(true),
+  );
 
 await new REST({ version: "10" })
   .setToken(req("DISCORD_TOKEN"))
