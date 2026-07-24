@@ -63,10 +63,22 @@ const closeWalletSubmission = new SlashCommandBuilder()
     o.setName("name").setDescription("Submission category name to close").setMaxLength(32).setRequired(true),
   );
 
+const resyncHolderRoles = new SlashCommandBuilder()
+  .setName("resync-holder-roles")
+  .setDescription("Recheck verified wallets and sync holder roles")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDMPermission(false);
+
 await new REST({ version: "10" })
   .setToken(req("DISCORD_TOKEN"))
   .put(Routes.applicationGuildCommands(req("DISCORD_CLIENT_ID"), req("DISCORD_GUILD_ID")), {
-    body: [verification.toJSON(), walletSubmission.toJSON(), exportWalletSubmissions.toJSON(), closeWalletSubmission.toJSON()],
+    body: [
+      verification.toJSON(),
+      walletSubmission.toJSON(),
+      exportWalletSubmissions.toJSON(),
+      closeWalletSubmission.toJSON(),
+      resyncHolderRoles.toJSON(),
+    ],
   });
 
 console.log("Commands deployed");

@@ -17,7 +17,9 @@ The bot verifies an OpenSea profile challenge, reads Orixa ERC-721 ownership dir
 
 Run /setup-verification and provide the target channel, and up to five role/count tiers. Qualifying tiers are cumulative.
 
-Production follow-up work should periodically recheck holders and remove roles after transfers.
+Holder roles are resynced automatically every `HOLDER_ROLE_SYNC_INTERVAL_MINUTES` minutes. Set it to `0` to disable the automatic loop.
+
+Admins can also run `/resync-holder-roles` to manually recheck all verified wallets. If a verified wallet no longer holds enough Orixa NFTs, the bot removes the configured holder tier roles from that Discord member. If the wallet still qualifies, the bot adds/updates the correct tier roles.
 
 ## Wallet submissions
 

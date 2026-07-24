@@ -35,6 +35,12 @@ export interface WalletSubmissionEntry {
   submittedAt: number;
 }
 
+export interface VerifiedWalletEntry {
+  discordUserId: string;
+  walletAddress: string;
+  verifiedAt: number;
+}
+
 interface Data {
   pending: Record<string, PendingVerification>;
   verified: Record<string, { discordUserId: string; walletAddress: string; verifiedAt: number }>;
@@ -87,6 +93,10 @@ export class VerificationStore {
 
   walletOwner(w: string) {
     return this.data.verified[w.toLowerCase()]?.discordUserId;
+  }
+
+  getVerifiedWallets() {
+    return Object.values(this.data.verified).map((entry) => ({ ...entry }));
   }
 
   getWalletSubmissionSetup(guildId: string, submissionKey: string) {

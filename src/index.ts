@@ -10,6 +10,7 @@ import {
   Events,
   GatewayIntentBits,
   GuildMember,
+  Guild,
   Interaction,
   MessageFlags,
   ModalBuilder,
@@ -40,6 +41,11 @@ const chain = new ArcClient(config.arcTestnetRpcUrl);
 
 client.once(Events.ClientReady, (c) => {
   console.log("Logged in as " + c.user.tag);
+  if (config.holderRoleSyncIntervalMs > 0) {
+    setInterval(() => {
+      syncHolderRoles("automatic").catch((e) => console.error("Holder role sync failed", e));
+    }, config.holderRoleSyncIntervalMs);
+  }
 });
 
 client.on(Events.InteractionCreate, async (i) => {
@@ -72,6 +78,11 @@ async function handle(i: Interaction) {
 
   if (i.isChatInputCommand() && i.commandName === "close-wallet-submission") {
     await handleCloseWalletSubmission(i);
+    return;
+  }
+
+  if (i.isChatInputCommand() && i.commandName === "resync-holder-roles") {
+    await handleResyncHolderRoles(i);
     return;
   }
 
@@ -229,6 +240,27 @@ async function handleSetupWalletSubmission(i: Interaction) {
     return;
   }
 
+  const me = i.guild!.members.me;
+  const channelPermissions = me ? channel.permissionsFor(me) : null;
+  const missingPermissions = [
+    [PermissionFlagsBits.ViewChannel, "View Channel"],
+    [PermissionFlagsBits.SendMessages, "Send Messages"],
+    [PermissionFlagsBits.EmbedLinks, "Embed Links"],
+  ].filter(([permission]) => !channelPermissions?.has(permission as bigint));
+
+  if (missingPermissions.length) {
+    await i.reply({
+      content:
+        "I cannot post the wallet submission panel in <#" +
+        channel.id +
+        ">. Missing permission(s): " +
+        missingPermissions.map(([, label]) => label).join(", ") +
+        ".",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   const now = Date.now();
   const closesAt = durationMinutes ? now + durationMinutes * 60_000 : null;
   await store.setWalletSubmissionSetup(i.guildId, submissionKey, {
@@ -310,6 +342,87 @@ async function handleExportWalletSubmissions(i: Interaction) {
   await i.reply({ content: "Exported " + entries.length + " wallet submission(s) for `" + submissionKey + "`.", files: [file], flags: MessageFlags.Ephemeral });
 }
 
+
+async function handleResyncHolderRoles(i: Interaction) {
+  if (!i.isChatInputCommand()) return;
+  if (!i.inGuild() || !i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await i.reply({ content: "Manage Server permission is required.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await i.deferReply({ flags: MessageFlags.Ephemeral });
+  const result = await syncHolderRoles("manual");
+  await i.editReply(
+    "Holder role sync complete. Checked " +
+      result.checked +
+      " wallet(s). Added roles for " +
+      result.membersWithAdds +
+      " member(s), removed roles from " +
+      result.membersWithRemoves +
+      " member(s), skipped " +
+      result.skipped +
+      ".",
+  );
+}
+
+async function syncHolderRoles(reason: "manual" | "automatic") {
+  const setup = store.getGuildSetup(config.guildId);
+  const verified = store.getVerifiedWallets();
+  const result = { checked: 0, skipped: 0, membersWithAdds: 0, membersWithRemoves: 0 };
+
+  if (!setup || !verified.length) return result;
+
+  const guild = await client.guilds.fetch(config.guildId);
+  await guild.roles.fetch();
+  await guild.members.fetchMe();
+  const manageable = setup.tiers.filter((tier) => canManageRole(guild, tier.roleId));
+  const manageableRoleIds = new Set(manageable.map((tier) => tier.roleId));
+  const syncSetup = { ...setup, tiers: setup.tiers.filter((tier) => manageableRoleIds.has(tier.roleId)) };
+
+  if (!syncSetup.tiers.length) {
+    console.warn("Holder role sync skipped: no configured holder roles are manageable by the bot.");
+    return { ...result, skipped: verified.length };
+  }
+
+  for (const entry of verified) {
+    try {
+      const member = await guild.members.fetch(entry.discordUserId).catch(() => null);
+      if (!member) {
+        result.skipped++;
+        continue;
+      }
+      const count = await chain.balance(syncSetup.contractAddress, entry.walletAddress);
+      const memberResult = await syncMemberHolderRoles(member, syncSetup, count);
+      result.checked++;
+      if (memberResult.added.length) result.membersWithAdds++;
+      if (memberResult.removed.length) result.membersWithRemoves++;
+    } catch (e) {
+      result.skipped++;
+      console.error("Failed to sync holder roles for " + entry.discordUserId + " during " + reason + " sync", e);
+    }
+  }
+
+  return result;
+}
+
+async function syncMemberHolderRoles(member: GuildMember, setup: { tiers: Array<{ roleId: string; nftCount: number }> }, nftCount: number) {
+  const all = setup.tiers.map((t) => t.roleId);
+  const qualified = setup.tiers.filter((t) => nftCount >= t.nftCount);
+  const add = qualified.map((t) => t.roleId).filter((roleId) => !member.roles.cache.has(roleId));
+  const remove = all.filter((roleId) => member.roles.cache.has(roleId) && !qualified.some((tier) => tier.roleId === roleId));
+
+  if (remove.length) await member.roles.remove(remove, "Orixa holder role resync");
+  if (add.length) await member.roles.add(add, "Orixa holder role resync");
+
+  return { added: add, removed: remove };
+}
+
+function canManageRole(guild: Guild, roleId: string) {
+  const me = guild.members.me;
+  const role = guild.roles.cache.get(roleId);
+  return Boolean(me && role && !role.managed && role.position < me.roles.highest.position);
+}
+
 async function handleHolderConfirm(i: Interaction) {
   if (!i.isButton()) return;
   await i.deferReply({ flags: MessageFlags.Ephemeral });
@@ -355,14 +468,9 @@ async function handleHolderConfirm(i: Interaction) {
   }
 
   const member = await i.guild!.members.fetch(i.user.id);
-  const all = setup.tiers.map((t) => t.roleId);
-  const add = qualified.map((t) => t.roleId);
-  const remove = all.filter((r) => member.roles.cache.has(r) && !add.includes(r));
-
-  if (remove.length) await member.roles.remove(remove, "NFT tier sync");
-  await member.roles.add(add, "Verified Orixa holder");
+  const result = await syncMemberHolderRoles(member, setup, count);
   await store.markVerified(p);
-  await i.editReply("Verified with " + count + " NFT(s). Granted: " + add.map((r) => "<@&" + r + ">").join(", ") + ".");
+  await i.editReply("Verified with " + count + " NFT(s). Granted: " + result.added.map((r) => "<@&" + r + ">").join(", ") + ".");
 }
 
 async function handleWalletSubmitButton(i: Interaction) {
