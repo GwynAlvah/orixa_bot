@@ -39,6 +39,8 @@ For `allow-roles`, paste roles into the input like `@Holder @OG @Whitelist` or p
 
 Each posted panel is tied to its own `name`, channel, role limits, close time, and entries. Users click **Submit wallet**, enter an EVM wallet address, and receive an ephemeral confirmation. Each Discord account has one entry per category; submitting again updates that user’s wallet for that category.
 
+Users can run `/my-wallet-submissions` to check their own submitted wallets across all wallet-submission categories.
+
 Running `/setup-wallet-submission` again with the same `name` resets that category and clears that category’s previous entries. Other categories are not affected.
 
 Admins can run `/close-wallet-submission name:<category>` to close one submission category immediately without deleting existing entries.

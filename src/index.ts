@@ -77,6 +77,7 @@ async function handle(i: Interaction) {
   if (i.isChatInputCommand() && i.commandName === "setup-wallet-submission") return handleSetupWalletSubmission(i);
   if (i.isChatInputCommand() && i.commandName === "export-wallet-submissions") return handleExportWalletSubmissions(i);
   if (i.isChatInputCommand() && i.commandName === "close-wallet-submission") return handleCloseWalletSubmission(i);
+  if (i.isChatInputCommand() && i.commandName === "my-wallet-submissions") return handleMyWalletSubmissions(i);
   if (i.isChatInputCommand() && i.commandName === "resync-holder-roles") return handleResyncHolderRoles(i);
   if (i.isChatInputCommand() && i.commandName === "configure-raffle") return handleConfigureRaffle(i);
   if (i.isChatInputCommand() && i.commandName === "setup-raffle") return handleSetupRaffle(i);
@@ -291,6 +292,22 @@ async function handleExportWalletSubmissions(i: Interaction) {
     ...entries.sort((a, b) => a.submittedAt - b.submittedAt).map((e) => [e.discordUserId, e.discordUsername, e.walletAddress, new Date(e.submittedAt).toISOString(), String(e.submittedAt)]),
   ];
   await replyCsv(i, "Exported " + entries.length + " wallet submission(s) for `" + submissionKey + "`.", "wallet-submissions-" + submissionKey + ".csv", rows);
+}
+
+
+async function handleMyWalletSubmissions(i: Interaction) {
+  if (!i.isChatInputCommand()) return;
+  if (!i.inGuild()) return i.reply({ content: "Use this inside the server.", flags: MessageFlags.Ephemeral });
+  const entries = store.getWalletSubmissionsForUser(i.guildId!, i.user.id).sort((a, b) => a.submittedAt - b.submittedAt);
+  if (!entries.length) {
+    await i.reply({ content: "You have not submitted a wallet for any wallet-submission category yet.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const lines = entries.map((entry) => {
+    return "- `" + entry.submissionKey + "`: `" + entry.walletAddress + "` submitted " + discordRelative(entry.submittedAt);
+  });
+  await i.reply({ content: "Your wallet submissions:\n" + lines.join("\n"), flags: MessageFlags.Ephemeral });
 }
 
 async function handleWalletSubmitButton(i: Interaction) {

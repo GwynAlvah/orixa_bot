@@ -147,6 +147,16 @@ export class VerificationStore {
     return Object.values(this.data.walletSubmissions[guildId]?.[submissionKey] ?? {}).map((entry) => ({ ...entry }));
   }
 
+  getWalletSubmissionsForUser(guildId: string, discordUserId: string) {
+    const submissions = this.data.walletSubmissions[guildId] ?? {};
+    return Object.entries(submissions)
+      .map(([submissionKey, entries]) => {
+        const entry = entries[discordUserId];
+        return entry ? { submissionKey, ...entry } : undefined;
+      })
+      .filter((entry): entry is WalletSubmissionEntry & { submissionKey: string } => Boolean(entry));
+  }
+
   getRaffleConfig(guildId: string) {
     const c = this.data.raffleConfigs[guildId];
     return c ? { ...c } : {};

@@ -63,6 +63,11 @@ const closeWalletSubmission = new SlashCommandBuilder()
     o.setName("name").setDescription("Submission category name to close").setMaxLength(32).setRequired(true),
   );
 
+const myWalletSubmissions = new SlashCommandBuilder()
+  .setName("my-wallet-submissions")
+  .setDescription("Check your submitted wallet entries")
+  .setDMPermission(false);
+
 const resyncHolderRoles = new SlashCommandBuilder()
   .setName("resync-holder-roles")
   .setDescription("Recheck verified wallets and sync holder roles")
@@ -137,6 +142,7 @@ await new REST({ version: "10" })
       walletSubmission.toJSON(),
       exportWalletSubmissions.toJSON(),
       closeWalletSubmission.toJSON(),
+      myWalletSubmissions.toJSON(),
       resyncHolderRoles.toJSON(),
       configureRaffle.toJSON(),
       setupRaffle.toJSON(),
