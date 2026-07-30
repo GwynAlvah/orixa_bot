@@ -624,11 +624,28 @@ async function refreshRaffleAnnounceMessage(raffle: Raffle) {
 }
 
 function winnerEmbed(raffle: Raffle, reason: "manual" | "automatic") {
-  const winners = raffle.winners.length ? raffle.winners.map((w, idx) => `${idx + 1}. <@${w.discordUserId}> — \`${w.walletAddress}\``).join("\n") : "No entries. No winners selected.";
+  const entrantCount = Object.keys(raffle.entries).length;
+  const drawnAt = raffle.drawnAt ?? Date.now();
+  const winners = raffle.winners.length
+    ? raffle.winners.map((w, idx) => "**" + (idx + 1) + ".** <@" + w.discordUserId + ">\n`" + w.walletAddress + "`").join("\n\n")
+    : "No valid entries were available, so no winners were selected.";
+
   return new EmbedBuilder()
-    .setColor(0x57f287)
-    .setTitle("Raffle winners: " + raffle.name)
-    .setDescription(["Draw type: **" + reason + "**", "", winners].join("\n"));
+    .setColor(0xe91e63)
+    .setTitle("🏆 Orixa Raffle Winners — " + raffle.name)
+    .setDescription([
+      "The raffle has been drawn. Congratulations to the winners.",
+      "",
+      winners,
+    ].join("\n"))
+    .addFields(
+      { name: "🎟️ Raffle", value: "`" + raffle.key + "`", inline: true },
+      { name: "👥 Entrants", value: String(entrantCount), inline: true },
+      { name: "🏆 Winners", value: String(raffle.winners.length) + " / " + raffle.winnerCount, inline: true },
+      { name: "⚙️ Draw type", value: reason === "automatic" ? "Automatic" : "Manual", inline: true },
+      { name: "🕒 Drawn", value: discordTime(drawnAt) + " (" + discordRelative(drawnAt) + ")", inline: true },
+    )
+    .setFooter({ text: "Winner wallet addresses are shown for admin verification. Never share seed phrases or private keys." });
 }
 
 function raffleEnterRow(raffleKey: string) {
