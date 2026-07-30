@@ -41,12 +41,42 @@ export interface VerifiedWalletEntry {
   verifiedAt: number;
 }
 
+export interface RaffleConfig {
+  announceChannelId?: string;
+  winnerChannelId?: string;
+}
+
+export interface RaffleEntry {
+  discordUserId: string;
+  discordUsername: string;
+  walletAddress: string;
+  enteredAt: number;
+}
+
+export interface Raffle {
+  key: string;
+  name: string;
+  announceChannelId: string;
+  winnerChannelId: string;
+  messageId?: string;
+  winnerCount: number;
+  allowedRoleIds: string[];
+  startsAt: number;
+  endsAt: number | null;
+  drawnAt: number | null;
+  entries: Record<string, RaffleEntry>;
+  winners: RaffleEntry[];
+}
+
 interface Data {
   pending: Record<string, PendingVerification>;
   verified: Record<string, { discordUserId: string; walletAddress: string; verifiedAt: number }>;
   guildSetups: Record<string, GuildSetup>;
   walletSubmissionSetups: Record<string, Record<string, WalletSubmissionSetup>>;
   walletSubmissions: Record<string, Record<string, Record<string, WalletSubmissionEntry>>>;
+  raffleConfigs: Record<string, RaffleConfig>;
+  raffleWallets: Record<string, Record<string, string>>;
+  raffles: Record<string, Record<string, Raffle>>;
 }
 
 export class VerificationStore {
@@ -56,6 +86,9 @@ export class VerificationStore {
     guildSetups: {},
     walletSubmissionSetups: {},
     walletSubmissions: {},
+    raffleConfigs: {},
+    raffleWallets: {},
+    raffles: {},
   };
 
   private queue = Promise.resolve();
@@ -67,6 +100,9 @@ export class VerificationStore {
       const p = JSON.parse(await readFile(this.file, "utf8")) as Partial<Data> & {
         walletSubmissionSetups?: unknown;
         walletSubmissions?: unknown;
+        raffleConfigs?: unknown;
+        raffleWallets?: unknown;
+        raffles?: unknown;
       };
       this.data = {
         pending: p.pending ?? {},
@@ -74,6 +110,9 @@ export class VerificationStore {
         guildSetups: p.guildSetups ?? {},
         walletSubmissionSetups: normalizeWalletSubmissionSetups(p.walletSubmissionSetups),
         walletSubmissions: normalizeWalletSubmissions(p.walletSubmissions),
+        raffleConfigs: normalizeRaffleConfigs(p.raffleConfigs),
+        raffleWallets: normalizeRaffleWallets(p.raffleWallets),
+        raffles: normalizeRaffles(p.raffles),
       };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
@@ -106,6 +145,32 @@ export class VerificationStore {
 
   getWalletSubmissions(guildId: string, submissionKey: string) {
     return Object.values(this.data.walletSubmissions[guildId]?.[submissionKey] ?? {}).map((entry) => ({ ...entry }));
+  }
+
+  getRaffleConfig(guildId: string) {
+    const c = this.data.raffleConfigs[guildId];
+    return c ? { ...c } : {};
+  }
+
+  getRaffleWallet(guildId: string, discordUserId: string) {
+    return this.data.raffleWallets[guildId]?.[discordUserId];
+  }
+
+  getRaffle(guildId: string, raffleKey: string) {
+    const r = this.data.raffles[guildId]?.[raffleKey];
+    return r ? cloneRaffle(r) : undefined;
+  }
+
+  listRaffles(guildId: string) {
+    return Object.values(this.data.raffles[guildId] ?? {}).map(cloneRaffle);
+  }
+
+  listActiveRaffles(guildId: string) {
+    return this.listRaffles(guildId).filter((r) => !r.drawnAt);
+  }
+
+  listEndedOrDrawnRaffles(guildId: string, now = Date.now()) {
+    return this.listRaffles(guildId).filter((r) => Boolean(r.drawnAt) || Boolean(r.endsAt && r.endsAt <= now));
   }
 
   async setGuildSetup(id: string, s: GuildSetup) {
@@ -161,6 +226,57 @@ export class VerificationStore {
     await this.save();
   }
 
+  async setRaffleConfig(guildId: string, config: RaffleConfig) {
+    const current = this.data.raffleConfigs[guildId] ?? {};
+    this.data.raffleConfigs[guildId] = { ...current, ...config };
+    await this.save();
+  }
+
+  async setRaffleWallet(guildId: string, discordUserId: string, walletAddress: string) {
+    this.data.raffleWallets[guildId] ??= {};
+    this.data.raffleWallets[guildId][discordUserId] = walletAddress.toLowerCase();
+    await this.save();
+  }
+
+  async setRaffle(guildId: string, raffle: Raffle) {
+    this.data.raffles[guildId] ??= {};
+    this.data.raffles[guildId][raffle.key] = cloneRaffle(raffle);
+    await this.save();
+  }
+
+  async updateRaffleMessage(guildId: string, raffleKey: string, messageId: string) {
+    const raffle = this.data.raffles[guildId]?.[raffleKey];
+    if (!raffle) return false;
+    raffle.messageId = messageId;
+    await this.save();
+    return true;
+  }
+
+  async addRaffleEntry(guildId: string, raffleKey: string, entry: RaffleEntry) {
+    const raffle = this.data.raffles[guildId]?.[raffleKey];
+    if (!raffle || raffle.drawnAt) return false;
+    raffle.entries[entry.discordUserId] = entry;
+    await this.save();
+    return true;
+  }
+
+  async setRaffleWinners(guildId: string, raffleKey: string, winners: RaffleEntry[], drawnAt: number) {
+    const raffle = this.data.raffles[guildId]?.[raffleKey];
+    if (!raffle) return undefined;
+    if (raffle.drawnAt) return cloneRaffle(raffle);
+    raffle.winners = winners.map((w) => ({ ...w }));
+    raffle.drawnAt = drawnAt;
+    await this.save();
+    return cloneRaffle(raffle);
+  }
+
+  async deleteRaffle(guildId: string, raffleKey: string) {
+    if (!this.data.raffles[guildId]?.[raffleKey]) return false;
+    delete this.data.raffles[guildId][raffleKey];
+    await this.save();
+    return true;
+  }
+
   private async save() {
     this.queue = this.queue.then(async () => {
       await mkdir(dirname(this.file), { recursive: true });
@@ -170,6 +286,15 @@ export class VerificationStore {
     });
     await this.queue;
   }
+}
+
+function cloneRaffle(r: Raffle): Raffle {
+  return {
+    ...r,
+    allowedRoleIds: [...r.allowedRoleIds],
+    entries: Object.fromEntries(Object.entries(r.entries).map(([userId, entry]) => [userId, { ...entry }])),
+    winners: r.winners.map((winner) => ({ ...winner })),
+  };
 }
 
 function normalizeWalletSubmissionSetups(input: unknown): Record<string, Record<string, WalletSubmissionSetup>> {
@@ -240,4 +365,81 @@ function normalizeEntryMap(input: Record<string, unknown>) {
     };
   }
   return result;
+}
+
+function normalizeRaffleConfigs(input: unknown): Record<string, RaffleConfig> {
+  if (!input || typeof input !== "object") return {};
+  const result: Record<string, RaffleConfig> = {};
+  for (const [guildId, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const c = value as Record<string, unknown>;
+    result[guildId] = {
+      announceChannelId: c.announceChannelId ? String(c.announceChannelId) : undefined,
+      winnerChannelId: c.winnerChannelId ? String(c.winnerChannelId) : undefined,
+    };
+  }
+  return result;
+}
+
+function normalizeRaffleWallets(input: unknown): Record<string, Record<string, string>> {
+  if (!input || typeof input !== "object") return {};
+  const result: Record<string, Record<string, string>> = {};
+  for (const [guildId, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    result[guildId] = {};
+    for (const [userId, wallet] of Object.entries(value as Record<string, unknown>)) {
+      if (wallet) result[guildId][userId] = String(wallet).toLowerCase();
+    }
+  }
+  return result;
+}
+
+function normalizeRaffles(input: unknown): Record<string, Record<string, Raffle>> {
+  if (!input || typeof input !== "object") return {};
+  const result: Record<string, Record<string, Raffle>> = {};
+  for (const [guildId, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    result[guildId] = {};
+    for (const [key, raffleValue] of Object.entries(value as Record<string, unknown>)) {
+      if (!raffleValue || typeof raffleValue !== "object") continue;
+      const r = raffleValue as Record<string, unknown>;
+      result[guildId][key] = {
+        key: String(r.key ?? key),
+        name: String(r.name ?? key),
+        announceChannelId: String(r.announceChannelId ?? ""),
+        winnerChannelId: String(r.winnerChannelId ?? r.announceChannelId ?? ""),
+        messageId: r.messageId ? String(r.messageId) : undefined,
+        winnerCount: Math.max(1, Number(r.winnerCount ?? 1)),
+        allowedRoleIds: Array.isArray(r.allowedRoleIds) ? r.allowedRoleIds.map(String) : [],
+        startsAt: Number(r.startsAt ?? Date.now()),
+        endsAt: r.endsAt === null || r.endsAt === undefined ? null : Number(r.endsAt),
+        drawnAt: r.drawnAt === null || r.drawnAt === undefined ? null : Number(r.drawnAt),
+        entries: normalizeRaffleEntries(r.entries),
+        winners: Array.isArray(r.winners) ? r.winners.map((winner) => normalizeRaffleEntry(winner)).filter((e): e is RaffleEntry => Boolean(e)) : [],
+      };
+    }
+  }
+  return result;
+}
+
+function normalizeRaffleEntries(input: unknown): Record<string, RaffleEntry> {
+  if (!input || typeof input !== "object") return {};
+  const result: Record<string, RaffleEntry> = {};
+  for (const [userId, value] of Object.entries(input as Record<string, unknown>)) {
+    const entry = normalizeRaffleEntry(value, userId);
+    if (entry) result[userId] = entry;
+  }
+  return result;
+}
+
+function normalizeRaffleEntry(input: unknown, fallbackUserId = ""): RaffleEntry | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const entry = input as Record<string, unknown>;
+  if (!entry.walletAddress) return undefined;
+  return {
+    discordUserId: String(entry.discordUserId ?? fallbackUserId),
+    discordUsername: String(entry.discordUsername ?? ""),
+    walletAddress: String(entry.walletAddress).toLowerCase(),
+    enteredAt: Number(entry.enteredAt ?? Date.now()),
+  };
 }

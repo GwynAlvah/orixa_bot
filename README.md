@@ -45,3 +45,51 @@ Admins can run `/close-wallet-submission name:<category>` to close one submissio
 
 Admins can run `/export-wallet-submissions name:<category>` to receive that category’s CSV as an ephemeral attachment.
 
+## Raffles
+
+Admins can configure default raffle channels:
+
+    /configure-raffle announce-channel:#raffles winner-channel:#winners
+
+Users must set a raffle wallet before entering:
+
+    /set-raffle-wallet wallet-address:0x...
+
+Admins create raffles with:
+
+    /setup-raffle name:og winners:5 duration:1d allow-roles:@OG
+
+Options:
+
+- `name`: required raffle name.
+- `winners`: required number of winners.
+- `duration`: optional. Supports `1d`, `1hr`, `10min`, `10sec`, and combined values like `1d 2hr`.
+- `announce-channel`: optional if configured with `/configure-raffle`.
+- `winner-channel`: optional if configured with `/configure-raffle`.
+- `allow-roles`: optional role mentions or role IDs. If empty, everyone can enter.
+
+The bot posts an **Enter raffle** button in the announce channel. Users can enter once per raffle; clicking again updates their entry with their current saved raffle wallet.
+
+Admins can draw manually:
+
+    /draw-raffle
+
+The command shows a dropdown of active raffles. Drawing saves winners permanently and posts them to the raffle winner channel. If a raffle has a duration and is already manually drawn, the automatic end-time draw will not draw winners again.
+
+Automatic drawing runs for raffles with a duration when their end time is reached.
+
+Admins can export ended or drawn raffle data:
+
+    /export-entries
+    /export-winners
+
+Both commands show a dropdown of ended or drawn raffles and export CSV files with:
+
+    discord_user_id,discord_username,wallet_address
+
+Admins can delete active raffles:
+
+    /delete-raffle
+
+The command shows a dropdown of active raffles and deletes the selected raffle, including its entries and winners.
+

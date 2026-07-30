@@ -69,6 +69,66 @@ const resyncHolderRoles = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .setDMPermission(false);
 
+const configureRaffle = new SlashCommandBuilder()
+  .setName("configure-raffle")
+  .setDescription("Configure default raffle channels")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDMPermission(false)
+  .addChannelOption((o) =>
+    o.setName("announce-channel").setDescription("Default raffle announce channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+  )
+  .addChannelOption((o) =>
+    o.setName("winner-channel").setDescription("Default raffle winner channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+  );
+
+const setupRaffle = new SlashCommandBuilder()
+  .setName("setup-raffle")
+  .setDescription("Create a raffle")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDMPermission(false)
+  .addStringOption((o) => o.setName("name").setDescription("Raffle name").setMaxLength(32).setRequired(true))
+  .addIntegerOption((o) => o.setName("winners").setDescription("Number of winners").setMinValue(1).setMaxValue(100).setRequired(true))
+  .addStringOption((o) => o.setName("duration").setDescription("Optional duration like 1d, 1hr, 10min, 10sec").setRequired(false))
+  .addChannelOption((o) =>
+    o.setName("announce-channel").setDescription("Override raffle announce channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+  )
+  .addChannelOption((o) =>
+    o.setName("winner-channel").setDescription("Override raffle winner channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+  )
+  .addStringOption((o) =>
+    o.setName("allow-roles").setDescription("Optional role mentions or IDs allowed to enter").setRequired(false),
+  );
+
+const setRaffleWallet = new SlashCommandBuilder()
+  .setName("set-raffle-wallet")
+  .setDescription("Set your wallet address for raffle entries")
+  .setDMPermission(false)
+  .addStringOption((o) => o.setName("wallet-address").setDescription("Your EVM wallet address").setMinLength(42).setMaxLength(42).setRequired(true));
+
+const drawRaffle = new SlashCommandBuilder()
+  .setName("draw-raffle")
+  .setDescription("Draw winners from an active raffle")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDMPermission(false);
+
+const exportEntries = new SlashCommandBuilder()
+  .setName("export-entries")
+  .setDescription("Export ended or drawn raffle entries")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDMPermission(false);
+
+const exportWinners = new SlashCommandBuilder()
+  .setName("export-winners")
+  .setDescription("Export ended or drawn raffle winners")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDMPermission(false);
+
+const deleteRaffle = new SlashCommandBuilder()
+  .setName("delete-raffle")
+  .setDescription("Delete an active raffle")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDMPermission(false);
+
 await new REST({ version: "10" })
   .setToken(req("DISCORD_TOKEN"))
   .put(Routes.applicationGuildCommands(req("DISCORD_CLIENT_ID"), req("DISCORD_GUILD_ID")), {
@@ -78,6 +138,13 @@ await new REST({ version: "10" })
       exportWalletSubmissions.toJSON(),
       closeWalletSubmission.toJSON(),
       resyncHolderRoles.toJSON(),
+      configureRaffle.toJSON(),
+      setupRaffle.toJSON(),
+      setRaffleWallet.toJSON(),
+      drawRaffle.toJSON(),
+      exportEntries.toJSON(),
+      exportWinners.toJSON(),
+      deleteRaffle.toJSON(),
     ],
   });
 
