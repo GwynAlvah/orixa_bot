@@ -254,10 +254,10 @@ export class VerificationStore {
 
   async addRaffleEntry(guildId: string, raffleKey: string, entry: RaffleEntry) {
     const raffle = this.data.raffles[guildId]?.[raffleKey];
-    if (!raffle || raffle.drawnAt) return false;
+    if (!raffle || raffle.drawnAt) return undefined;
     raffle.entries[entry.discordUserId] = entry;
     await this.save();
-    return true;
+    return cloneRaffle(raffle);
   }
 
   async setRaffleWinners(guildId: string, raffleKey: string, winners: RaffleEntry[], drawnAt: number) {

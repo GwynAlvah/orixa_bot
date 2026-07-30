@@ -412,7 +412,8 @@ async function handleRaffleEnter(i: Interaction) {
   if (!memberHasAnyRole(i.member, raffle.allowedRoleIds)) return i.reply({ content: "You do not have an allowed role for this raffle.", flags: MessageFlags.Ephemeral });
   const wallet = store.getRaffleWallet(i.guildId!, i.user.id);
   if (!wallet) return i.reply({ content: "Set your raffle wallet first with `/set-raffle-wallet`.", flags: MessageFlags.Ephemeral });
-  await store.addRaffleEntry(i.guildId!, raffleKey, { discordUserId: i.user.id, discordUsername: i.user.tag, walletAddress: wallet, enteredAt: Date.now() });
+  const updated = await store.addRaffleEntry(i.guildId!, raffleKey, { discordUserId: i.user.id, discordUsername: i.user.tag, walletAddress: wallet, enteredAt: Date.now() });
+  if (updated) await refreshRaffleAnnounceMessage(updated);
   await i.reply({ content: "Entered raffle `" + raffleKey + "` with wallet `" + wallet + "`.", flags: MessageFlags.Ephemeral });
 }
 
@@ -574,19 +575,35 @@ async function syncMemberHolderRoles(member: GuildMember, setup: { tiers: Array<
 
 function raffleEmbed(raffle: Raffle) {
   const roles = raffle.allowedRoleIds.length ? raffle.allowedRoleIds.map((r) => "<@&" + r + ">").join(", ") : "Everyone";
-  const ends = raffle.endsAt ? discordTime(raffle.endsAt) + " (" + discordRelative(raffle.endsAt) + ")" : "No automatic end time";
+  const ends = raffle.endsAt ? discordTime(raffle.endsAt) + " (" + discordRelative(raffle.endsAt) + ")" : "Manual draw only";
+  const entrants = Object.keys(raffle.entries).length;
   return new EmbedBuilder()
-    .setColor(0xf1c40f)
-    .setTitle("Raffle: " + raffle.name)
+    .setColor(0x9b59b6)
+    .setTitle("🎟️ Orixa Raffle — " + raffle.name)
     .setDescription([
-      "Click **Enter raffle** to join.",
+      "A raffle is open for the Orixa community.",
       "",
-      "**Winners**: " + raffle.winnerCount,
-      "**Allowed entrants**: " + roles,
-      "**Ends**: " + ends,
+      "Set your raffle wallet with `/set-raffle-wallet`, then click **Enter raffle** below.",
       "",
-      "Set your wallet first with `/set-raffle-wallet`.",
-    ].join("\n"));
+      "No transaction, approval, seed phrase, or private key is requested.",
+    ].join("\n"))
+    .addFields(
+      { name: "🏆 Winners", value: String(raffle.winnerCount), inline: true },
+      { name: "👥 Entrants", value: String(entrants), inline: true },
+      { name: "⏳ Ends", value: ends, inline: false },
+      { name: "📣 Winner channel", value: "<#" + raffle.winnerChannelId + ">", inline: true },
+      { name: "🔒 Eligible roles", value: roles, inline: false },
+    )
+    .setFooter({ text: "One entry per Discord account. Re-entering updates your saved wallet for this raffle." });
+}
+
+async function refreshRaffleAnnounceMessage(raffle: Raffle) {
+  if (!raffle.messageId) return;
+  const channel = await client.channels.fetch(raffle.announceChannelId).catch(() => null);
+  if (!channel?.isTextBased() || !("messages" in channel)) return;
+  const message = await channel.messages.fetch(raffle.messageId).catch(() => null);
+  if (!message) return;
+  await message.edit({ embeds: [raffleEmbed(raffle)], components: [raffleEnterRow(raffle.key)] }).catch(() => undefined);
 }
 
 function winnerEmbed(raffle: Raffle, reason: "manual" | "automatic") {
