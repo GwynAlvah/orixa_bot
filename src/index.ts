@@ -377,6 +377,10 @@ async function handleSetupRaffle(i: Interaction) {
   const durationMs = durationInput ? parseDurationMs(durationInput) : null;
   if (durationInput && !durationMs) return i.reply({ content: "Invalid duration. Use formats like `1d`, `1hr`, `10min`, `10sec`, or `1d 2hr`.", flags: MessageFlags.Ephemeral });
   const allowedRoleIds = parseRoleIds(i.options.getString("allow-roles"));
+  const xLink = i.options.getString("x-link")?.trim();
+  const tweetLink = i.options.getString("tweet-link")?.trim();
+  if (xLink && !isHttpUrl(xLink)) return i.reply({ content: "`x-link` must be a valid https:// or http:// URL.", flags: MessageFlags.Ephemeral });
+  if (tweetLink && !isHttpUrl(tweetLink)) return i.reply({ content: "`tweet-link` must be a valid https:// or http:// URL.", flags: MessageFlags.Ephemeral });
   const missingRoleId = allowedRoleIds.find((roleId) => !i.guild!.roles.cache.has(roleId));
   if (missingRoleId) return i.reply({ content: "Role not found in this server: `" + missingRoleId + "`", flags: MessageFlags.Ephemeral });
 
@@ -394,6 +398,8 @@ async function handleSetupRaffle(i: Interaction) {
     winnerChannelId,
     winnerCount,
     allowedRoleIds,
+    xLink,
+    tweetLink,
     startsAt: now,
     endsAt,
     drawnAt: null,
@@ -404,7 +410,7 @@ async function handleSetupRaffle(i: Interaction) {
 
   const announce = await client.channels.fetch(announceChannelId);
   if (!announce?.isTextBased() || !("send" in announce)) return i.reply({ content: "Announce channel is not available.", flags: MessageFlags.Ephemeral });
-  const message = await announce.send({ embeds: [raffleEmbed(raffle)], components: [raffleEnterRow(raffleKey)] });
+  const message = await announce.send({ embeds: [raffleEmbed(raffle)], components: raffleRows(raffle) });
   await store.updateRaffleMessage(i.guildId!, raffleKey, message.id);
   await i.reply({ content: "Raffle `" + raffleKey + "` posted in <#" + announceChannelId + ">.", flags: MessageFlags.Ephemeral });
 }
@@ -620,7 +626,7 @@ async function refreshRaffleAnnounceMessage(raffle: Raffle) {
   if (!channel?.isTextBased() || !("messages" in channel)) return;
   const message = await channel.messages.fetch(raffle.messageId).catch(() => null);
   if (!message) return;
-  await message.edit({ embeds: [raffleEmbed(raffle)], components: [raffleEnterRow(raffle.key)] }).catch(() => undefined);
+  await message.edit({ embeds: [raffleEmbed(raffle)], components: raffleRows(raffle) }).catch(() => undefined);
 }
 
 function winnerEmbed(raffle: Raffle, reason: "manual" | "automatic") {
@@ -646,6 +652,15 @@ function winnerEmbed(raffle: Raffle, reason: "manual" | "automatic") {
       { name: "🕒 Drawn", value: discordTime(drawnAt) + " (" + discordRelative(drawnAt) + ")", inline: true },
     )
     .setFooter({ text: "Winner wallet addresses are shown for admin verification. Never share seed phrases or private keys." });
+}
+
+function raffleRows(raffle: Raffle) {
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [raffleEnterRow(raffle.key)];
+  const linkButtons: ButtonBuilder[] = [];
+  if (raffle.xLink) linkButtons.push(new ButtonBuilder().setLabel("Follow on X").setStyle(ButtonStyle.Link).setURL(raffle.xLink));
+  if (raffle.tweetLink) linkButtons.push(new ButtonBuilder().setLabel("View Tweet").setStyle(ButtonStyle.Link).setURL(raffle.tweetLink));
+  if (linkButtons.length) rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(linkButtons));
+  return rows;
 }
 
 function raffleEnterRow(raffleKey: string) {
@@ -728,6 +743,15 @@ function canManageRole(guild: Guild, roleId: string) {
   const me = guild.members.me;
   const role = guild.roles.cache.get(roleId);
   return Boolean(me && role && !role.managed && role.position < me.roles.highest.position);
+}
+
+function isHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 function parseRoleIds(input: string | null) {

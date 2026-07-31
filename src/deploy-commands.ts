@@ -102,6 +102,12 @@ const setupRaffle = new SlashCommandBuilder()
   )
   .addStringOption((o) =>
     o.setName("allow-roles").setDescription("Optional role mentions or IDs allowed to enter").setRequired(false),
+  )
+  .addStringOption((o) =>
+    o.setName("x-link").setDescription("Optional X profile URL for the Follow button").setRequired(false),
+  )
+  .addStringOption((o) =>
+    o.setName("tweet-link").setDescription("Optional tweet URL for the Tweet button").setRequired(false),
   );
 
 const setRaffleWallet = new SlashCommandBuilder()

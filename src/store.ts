@@ -61,6 +61,8 @@ export interface Raffle {
   messageId?: string;
   winnerCount: number;
   allowedRoleIds: string[];
+  xLink?: string;
+  tweetLink?: string;
   startsAt: number;
   endsAt: number | null;
   drawnAt: number | null;
@@ -302,6 +304,8 @@ function cloneRaffle(r: Raffle): Raffle {
   return {
     ...r,
     allowedRoleIds: [...r.allowedRoleIds],
+    xLink: r.xLink,
+    tweetLink: r.tweetLink,
     entries: Object.fromEntries(Object.entries(r.entries).map(([userId, entry]) => [userId, { ...entry }])),
     winners: r.winners.map((winner) => ({ ...winner })),
   };
@@ -421,6 +425,8 @@ function normalizeRaffles(input: unknown): Record<string, Record<string, Raffle>
         messageId: r.messageId ? String(r.messageId) : undefined,
         winnerCount: Math.max(1, Number(r.winnerCount ?? 1)),
         allowedRoleIds: Array.isArray(r.allowedRoleIds) ? r.allowedRoleIds.map(String) : [],
+        xLink: r.xLink ? String(r.xLink) : undefined,
+        tweetLink: r.tweetLink ? String(r.tweetLink) : undefined,
         startsAt: Number(r.startsAt ?? Date.now()),
         endsAt: r.endsAt === null || r.endsAt === undefined ? null : Number(r.endsAt),
         drawnAt: r.drawnAt === null || r.drawnAt === undefined ? null : Number(r.drawnAt),

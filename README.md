@@ -59,7 +59,7 @@ Users must set a raffle wallet before entering:
 
 Admins create raffles with:
 
-    /setup-raffle name:og winners:5 duration:1d allow-roles:@OG
+    /setup-raffle name:og winners:5 duration:1d allow-roles:@OG x-link:https://x.com/orixa tweet-link:https://x.com/orixa/status/...
 
 Options:
 
@@ -69,6 +69,8 @@ Options:
 - `announce-channel`: optional if configured with `/configure-raffle`.
 - `winner-channel`: optional if configured with `/configure-raffle`.
 - `allow-roles`: optional role mentions or role IDs. If empty, everyone can enter.
+- `x-link`: optional X profile URL used by the **Follow on X** button.
+- `tweet-link`: optional tweet URL used by the **View Tweet** button.
 
 The bot posts an **Enter raffle** button in the announce channel. Users can enter once per raffle; clicking again updates their entry with their current saved raffle wallet.
 
