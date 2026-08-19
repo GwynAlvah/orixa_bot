@@ -280,6 +280,14 @@ export class VerificationStore {
     return cloneRaffle(raffle);
   }
 
+  async setRaffleWinnerChannel(guildId: string, raffleKey: string, winnerChannelId: string) {
+    const raffle = this.data.raffles[guildId]?.[raffleKey];
+    if (!raffle) return undefined;
+    raffle.winnerChannelId = winnerChannelId;
+    await this.save();
+    return cloneRaffle(raffle);
+  }
+
   async setRaffleWinners(guildId: string, raffleKey: string, winners: RaffleEntry[], drawnAt: number) {
     const raffle = this.data.raffles[guildId]?.[raffleKey];
     if (!raffle) return undefined;

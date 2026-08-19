@@ -144,7 +144,14 @@ const announceWinners = new SlashCommandBuilder()
   .setName("announce-winners")
   .setDescription("Re-post the winners of an already drawn raffle")
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-  .setDMPermission(false);
+  .setDMPermission(false)
+  .addChannelOption((o) =>
+    o
+      .setName("winner-channel")
+      .setDescription("Optional: post to this channel instead, and save it as the raffle winner channel")
+      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+      .setRequired(false),
+  );
 
 // DISCORD_GUILD_IDS takes a comma/space separated list so commands land in every server
 // the bot serves. DISCORD_GUILD_ID stays supported as the single-guild fallback.

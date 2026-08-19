@@ -101,7 +101,7 @@ async function handle(i: Interaction) {
   if (i.isStringSelectMenu() && i.customId === RAFFLE_EXPORT_ENTRIES_SELECT) return handleExportRaffleEntriesSelect(i);
   if (i.isStringSelectMenu() && i.customId === RAFFLE_EXPORT_WINNERS_SELECT) return handleExportRaffleWinnersSelect(i);
   if (i.isStringSelectMenu() && i.customId === RAFFLE_DELETE_SELECT) return handleDeleteRaffleSelect(i);
-  if (i.isStringSelectMenu() && i.customId === RAFFLE_ANNOUNCE_SELECT) return handleAnnounceWinnersSelect(i);
+  if (i.isStringSelectMenu() && i.customId.startsWith(RAFFLE_ANNOUNCE_SELECT)) return handleAnnounceWinnersSelect(i);
 }
 
 async function handleSetupVerification(i: Interaction) {
@@ -479,8 +479,7 @@ async function handleDrawRaffleSelect(i: Interaction) {
     raffle = await drawRaffle(i.guildId!, raffleKey, "manual");
   } catch (e) {
     console.error("Manual draw failed for raffle " + raffleKey, e);
-    const configured = store.getRaffle(i.guildId!, raffleKey);
-    return i.editReply({ content: "Winners were not announced and the raffle is still undrawn. Could not post to <#" + configured?.winnerChannelId + ">. Check that the channel exists and the bot has View Channel, Send Messages, and Embed Links there, then run `/draw-raffle` again.", components: [] });
+    return i.editReply({ content: "Winners were not announced and the raffle is still undrawn, so you can retry. " + (e instanceof Error ? e.message : String(e)), components: [] });
   }
   if (!raffle) return i.editReply({ content: "Raffle `" + raffleKey + "` is not configured.", components: [] });
   await i.editReply({ content: drawSummary(raffle), components: [] });
@@ -521,7 +520,12 @@ async function handleDeleteRaffleSelect(i: Interaction) {
 async function handleAnnounceWinnersCommand(i: Interaction) {
   if (!i.isChatInputCommand()) return;
   if (!isGuildAdmin(i)) return i.reply({ content: "Manage Server permission is required.", flags: MessageFlags.Ephemeral });
-  await replyRaffleSelect(i, store.listDrawnRaffles(i.guildId!), RAFFLE_ANNOUNCE_SELECT, "Select a drawn raffle to re-post its winners.", "No drawn raffles to announce.");
+  const override = i.options.getChannel("winner-channel", false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
+  const customId = override ? RAFFLE_ANNOUNCE_SELECT + ":" + override.id : RAFFLE_ANNOUNCE_SELECT;
+  const prompt = override
+    ? "Select a drawn raffle to re-post its winners into <#" + override.id + ">."
+    : "Select a drawn raffle to re-post its winners.";
+  await replyRaffleSelect(i, store.listDrawnRaffles(i.guildId!), customId, prompt, "No drawn raffles to announce.");
 }
 
 async function handleAnnounceWinnersSelect(i: Interaction) {
@@ -532,13 +536,18 @@ async function handleAnnounceWinnersSelect(i: Interaction) {
   const raffle = store.getRaffle(i.guildId!, raffleKey);
   if (!raffle) return i.editReply({ content: "Raffle `" + raffleKey + "` is not configured.", components: [] });
   if (!raffle.drawnAt) return i.editReply({ content: "Raffle `" + raffleKey + "` has not been drawn yet. Use `/draw-raffle`.", components: [] });
+
+  const override = i.customId.startsWith(RAFFLE_ANNOUNCE_SELECT + ":") ? customIdSuffix(i.customId, RAFFLE_ANNOUNCE_SELECT) : "";
+  const channelId = override || raffle.winnerChannelId;
   try {
-    await postWinners(raffle, "manual");
+    await postWinners(raffle, "manual", channelId);
   } catch (e) {
     console.error("Failed to announce winners for raffle " + raffleKey, e);
-    return i.editReply({ content: "Could not post to <#" + raffle.winnerChannelId + ">. Check that the channel exists and the bot has View Channel, Send Messages, and Embed Links there.", components: [] });
+    return i.editReply({ content: "Winners were not posted. " + (e instanceof Error ? e.message : String(e)), components: [] });
   }
-  await i.editReply({ content: "Announced winners for `" + raffleKey + "` in <#" + raffle.winnerChannelId + ">. " + drawSummary(raffle), components: [] });
+  // The saved channel was unreachable or wrong, so keep the working one for future posts.
+  if (override && override !== raffle.winnerChannelId) await store.setRaffleWinnerChannel(i.guildId!, raffleKey, override);
+  await i.editReply({ content: "Announced winners for `" + raffleKey + "` in <#" + channelId + ">. " + drawSummary(raffle), components: [] });
 }
 
 async function drawEndedRaffles() {
@@ -573,11 +582,44 @@ async function drawRaffle(guildId: string, raffleKey: string, reason: "manual" |
   return drawn;
 }
 
-async function postWinners(raffle: Raffle, reason: "manual" | "automatic") {
-  const channel = await client.channels.fetch(raffle.winnerChannelId).catch(() => null);
-  if (!channel) throw Error("Winner channel " + raffle.winnerChannelId + " for raffle " + raffle.key + " could not be fetched. It may be deleted or hidden from the bot.");
-  if (!channel.isTextBased() || !("send" in channel)) throw Error("Winner channel " + raffle.winnerChannelId + " for raffle " + raffle.key + " is not a text channel the bot can post in.");
-  await channel.send({ embeds: [winnerEmbed(raffle, reason)] });
+// Returns a human-readable reason instead of a generic failure, so an admin is told what is
+// actually wrong rather than being sent to re-check permissions that were never the problem.
+async function postWinners(raffle: Raffle, reason: "manual" | "automatic", channelId = raffle.winnerChannelId) {
+  if (!channelId) throw Error("This raffle has no winner channel saved. Re-run the command with the `winner-channel` option.");
+
+  const channel = await client.channels.fetch(channelId).catch((e) => e as Error);
+  if (channel instanceof Error) {
+    throw Error("Could not open <#" + channelId + "> (`" + channelId + "`). Discord said: " + describeDiscordError(channel));
+  }
+  if (!channel) throw Error("Channel `" + channelId + "` does not exist, or the bot is not in the server that owns it.");
+  if (!channel.isTextBased() || !("send" in channel)) throw Error("<#" + channelId + "> is a " + ChannelType[channel.type] + " channel. Winners can only be posted to a text or announcement channel.");
+  if ("guild" in channel && channel.guild) {
+    // fetchMe first: guild.members.me can be uncached, which would otherwise read as
+    // "every permission missing" and send the admin chasing permissions that are fine.
+    const me = await channel.guild.members.fetchMe().catch(() => null);
+    const permissions = me ? channel.permissionsFor(me) : null;
+    if (permissions) {
+      const missing = REQUIRED_POST_PERMISSIONS.filter(([flag]) => !permissions.has(flag)).map(([, label]) => label);
+      if (missing.length) throw Error("The bot is missing " + missing.join(", ") + " in <#" + channelId + ">.");
+    }
+  }
+
+  try {
+    await channel.send({ embeds: [winnerEmbed(raffle, reason)] });
+  } catch (e) {
+    throw Error("Discord rejected the winners message for <#" + channelId + ">: " + describeDiscordError(e));
+  }
+}
+
+function describeDiscordError(e: unknown) {
+  if (!e || typeof e !== "object") return String(e);
+  const err = e as { code?: unknown; status?: unknown; message?: unknown; rawError?: { message?: unknown } };
+  const parts = [
+    err.code !== undefined ? "code " + String(err.code) : "",
+    err.status !== undefined ? "HTTP " + String(err.status) : "",
+    String(err.rawError?.message ?? err.message ?? "unknown error"),
+  ].filter(Boolean);
+  return parts.join(", ");
 }
 
 function pickWinners(entries: RaffleEntry[], winnerCount: number) {
@@ -681,8 +723,19 @@ async function refreshRaffleAnnounceMessage(raffle: Raffle) {
 function winnerEmbed(raffle: Raffle, reason: "manual" | "automatic") {
   const entrantCount = Object.keys(raffle.entries).length;
   const drawnAt = raffle.drawnAt ?? Date.now();
-  const winners = raffle.winners.length
-    ? raffle.winners.map((w, idx) => "**" + (idx + 1) + ".** <@" + w.discordUserId + ">\n`" + w.walletAddress + "`").join("\n\n")
+  const lines = raffle.winners.map((w, idx) => "**" + (idx + 1) + ".** <@" + w.discordUserId + ">\n`" + w.walletAddress + "`");
+  // Discord rejects a description over 4096 characters, which would fail the whole announcement.
+  // Trim the list rather than lose the post; /export-winners still has every winner.
+  const shown: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    if (used + line.length + 2 > 3600) break;
+    used += line.length + 2;
+    shown.push(line);
+  }
+  const omitted = lines.length - shown.length;
+  const winners = lines.length
+    ? shown.join("\n\n") + (omitted > 0 ? "\n\n…and " + omitted + " more. Use `/export-winners` for the full list." : "")
     : "No valid entries were available, so no winners were selected.";
 
   return new EmbedBuilder()
@@ -766,15 +819,17 @@ function isGuildAdmin(i: Interaction) {
   return Boolean(i.inGuild() && i.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
 }
 
+const REQUIRED_POST_PERMISSIONS: Array<[bigint, string]> = [
+  [PermissionFlagsBits.ViewChannel, "View Channel"],
+  [PermissionFlagsBits.SendMessages, "Send Messages"],
+  [PermissionFlagsBits.EmbedLinks, "Embed Links"],
+];
+
 function missingChannelPermissions(guild: Guild, channelId: string) {
   const channel = guild.channels.cache.get(channelId);
   const me = guild.members.me;
   const permissions = channel && me ? channel.permissionsFor(me) : null;
-  return [
-    [PermissionFlagsBits.ViewChannel, "View Channel"],
-    [PermissionFlagsBits.SendMessages, "Send Messages"],
-    [PermissionFlagsBits.EmbedLinks, "Embed Links"],
-  ].filter(([permission]) => !permissions?.has(permission as bigint)).map(([, label]) => String(label));
+  return REQUIRED_POST_PERMISSIONS.filter(([permission]) => !permissions?.has(permission)).map(([, label]) => label);
 }
 
 function missingChannelPermissionMessage(channelId: string, missing: string[]) {
