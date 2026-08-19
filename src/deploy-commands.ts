@@ -140,24 +140,44 @@ const deleteRaffle = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .setDMPermission(false);
 
-await new REST({ version: "10" })
-  .setToken(req("DISCORD_TOKEN"))
-  .put(Routes.applicationGuildCommands(req("DISCORD_CLIENT_ID"), req("DISCORD_GUILD_ID")), {
-    body: [
-      verification.toJSON(),
-      walletSubmission.toJSON(),
-      exportWalletSubmissions.toJSON(),
-      closeWalletSubmission.toJSON(),
-      myWalletSubmissions.toJSON(),
-      resyncHolderRoles.toJSON(),
-      configureRaffle.toJSON(),
-      setupRaffle.toJSON(),
-      setRaffleWallet.toJSON(),
-      drawRaffle.toJSON(),
-      exportEntries.toJSON(),
-      exportWinners.toJSON(),
-      deleteRaffle.toJSON(),
-    ],
-  });
+const announceWinners = new SlashCommandBuilder()
+  .setName("announce-winners")
+  .setDescription("Re-post the winners of an already drawn raffle")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .setDMPermission(false);
 
-console.log("Commands deployed");
+// DISCORD_GUILD_IDS takes a comma/space separated list so commands land in every server
+// the bot serves. DISCORD_GUILD_ID stays supported as the single-guild fallback.
+const guildIds = [
+  ...new Set(
+    (process.env.DISCORD_GUILD_IDS?.trim() || req("DISCORD_GUILD_ID"))
+      .split(/[\s,]+/)
+      .map((id) => id.trim())
+      .filter(Boolean),
+  ),
+];
+
+const body = [
+  verification.toJSON(),
+  walletSubmission.toJSON(),
+  exportWalletSubmissions.toJSON(),
+  closeWalletSubmission.toJSON(),
+  myWalletSubmissions.toJSON(),
+  resyncHolderRoles.toJSON(),
+  configureRaffle.toJSON(),
+  setupRaffle.toJSON(),
+  setRaffleWallet.toJSON(),
+  drawRaffle.toJSON(),
+  exportEntries.toJSON(),
+  exportWinners.toJSON(),
+  deleteRaffle.toJSON(),
+  announceWinners.toJSON(),
+];
+
+const rest = new REST({ version: "10" }).setToken(req("DISCORD_TOKEN"));
+const clientId = req("DISCORD_CLIENT_ID");
+
+for (const guildId of guildIds) {
+  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
+  console.log("Commands deployed to guild " + guildId);
+}

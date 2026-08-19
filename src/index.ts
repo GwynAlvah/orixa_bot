@@ -40,6 +40,7 @@ const RAFFLE_DRAW_SELECT = "raffle:draw-select";
 const RAFFLE_EXPORT_ENTRIES_SELECT = "raffle:export-entries-select";
 const RAFFLE_EXPORT_WINNERS_SELECT = "raffle:export-winners-select";
 const RAFFLE_DELETE_SELECT = "raffle:delete-select";
+const RAFFLE_ANNOUNCE_SELECT = "raffle:announce-select";
 
 const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 
@@ -86,6 +87,7 @@ async function handle(i: Interaction) {
   if (i.isChatInputCommand() && i.commandName === "export-entries") return handleExportEntriesCommand(i);
   if (i.isChatInputCommand() && i.commandName === "export-winners") return handleExportWinnersCommand(i);
   if (i.isChatInputCommand() && i.commandName === "delete-raffle") return handleDeleteRaffleCommand(i);
+  if (i.isChatInputCommand() && i.commandName === "announce-winners") return handleAnnounceWinnersCommand(i);
 
   if (i.isButton() && i.customId === VERIFY) return showHolderModal(i);
   if (i.isModalSubmit() && i.customId === HOLDER_MODAL) return handleHolderModal(i);
@@ -99,6 +101,7 @@ async function handle(i: Interaction) {
   if (i.isStringSelectMenu() && i.customId === RAFFLE_EXPORT_ENTRIES_SELECT) return handleExportRaffleEntriesSelect(i);
   if (i.isStringSelectMenu() && i.customId === RAFFLE_EXPORT_WINNERS_SELECT) return handleExportRaffleWinnersSelect(i);
   if (i.isStringSelectMenu() && i.customId === RAFFLE_DELETE_SELECT) return handleDeleteRaffleSelect(i);
+  if (i.isStringSelectMenu() && i.customId === RAFFLE_ANNOUNCE_SELECT) return handleAnnounceWinnersSelect(i);
 }
 
 async function handleSetupVerification(i: Interaction) {
@@ -471,7 +474,14 @@ async function handleDrawRaffleSelect(i: Interaction) {
   await i.deferUpdate();
   const raffleKey = i.values[0];
   if (!raffleKey) return i.editReply({ content: "No raffle selected.", components: [] });
-  const raffle = await drawRaffle(i.guildId!, raffleKey, "manual");
+  let raffle: Raffle | undefined;
+  try {
+    raffle = await drawRaffle(i.guildId!, raffleKey, "manual");
+  } catch (e) {
+    console.error("Manual draw failed for raffle " + raffleKey, e);
+    const configured = store.getRaffle(i.guildId!, raffleKey);
+    return i.editReply({ content: "Winners were not announced and the raffle is still undrawn. Could not post to <#" + configured?.winnerChannelId + ">. Check that the channel exists and the bot has View Channel, Send Messages, and Embed Links there, then run `/draw-raffle` again.", components: [] });
+  }
   if (!raffle) return i.editReply({ content: "Raffle `" + raffleKey + "` is not configured.", components: [] });
   await i.editReply({ content: drawSummary(raffle), components: [] });
 }
@@ -508,26 +518,65 @@ async function handleDeleteRaffleSelect(i: Interaction) {
   await i.update({ content: deleted ? "Deleted active raffle `" + raffleKey + "`." : "Raffle `" + raffleKey + "` is not configured.", components: [] });
 }
 
+async function handleAnnounceWinnersCommand(i: Interaction) {
+  if (!i.isChatInputCommand()) return;
+  if (!isGuildAdmin(i)) return i.reply({ content: "Manage Server permission is required.", flags: MessageFlags.Ephemeral });
+  await replyRaffleSelect(i, store.listDrawnRaffles(i.guildId!), RAFFLE_ANNOUNCE_SELECT, "Select a drawn raffle to re-post its winners.", "No drawn raffles to announce.");
+}
+
+async function handleAnnounceWinnersSelect(i: Interaction) {
+  if (!i.isStringSelectMenu()) return;
+  await i.deferUpdate();
+  const raffleKey = i.values[0];
+  if (!raffleKey) return i.editReply({ content: "No raffle selected.", components: [] });
+  const raffle = store.getRaffle(i.guildId!, raffleKey);
+  if (!raffle) return i.editReply({ content: "Raffle `" + raffleKey + "` is not configured.", components: [] });
+  if (!raffle.drawnAt) return i.editReply({ content: "Raffle `" + raffleKey + "` has not been drawn yet. Use `/draw-raffle`.", components: [] });
+  try {
+    await postWinners(raffle, "manual");
+  } catch (e) {
+    console.error("Failed to announce winners for raffle " + raffleKey, e);
+    return i.editReply({ content: "Could not post to <#" + raffle.winnerChannelId + ">. Check that the channel exists and the bot has View Channel, Send Messages, and Embed Links there.", components: [] });
+  }
+  await i.editReply({ content: "Announced winners for `" + raffleKey + "` in <#" + raffle.winnerChannelId + ">. " + drawSummary(raffle), components: [] });
+}
+
 async function drawEndedRaffles() {
   const now = Date.now();
-  const due = store.listActiveRaffles(config.guildId).filter((r) => r.endsAt && r.endsAt <= now);
-  for (const raffle of due) await drawRaffle(config.guildId, raffle.key, "automatic");
+  for (const guildId of raffleGuildIds()) {
+    const due = store.listActiveRaffles(guildId).filter((r) => r.endsAt && r.endsAt <= now);
+    for (const raffle of due) {
+      try {
+        await drawRaffle(guildId, raffle.key, "automatic");
+      } catch (e) {
+        console.error("Automatic draw failed for raffle " + raffle.key + " in guild " + guildId, e);
+      }
+    }
+  }
+}
+
+function raffleGuildIds() {
+  return [...new Set([config.guildId, ...store.listGuildIdsWithRaffles()])];
 }
 
 async function drawRaffle(guildId: string, raffleKey: string, reason: "manual" | "automatic") {
   const raffle = store.getRaffle(guildId, raffleKey);
   if (!raffle) return undefined;
   if (raffle.drawnAt) return raffle;
+  const drawnAt = Date.now();
   const winners = pickWinners(Object.values(raffle.entries), raffle.winnerCount);
-  const drawn = await store.setRaffleWinners(guildId, raffleKey, winners, Date.now());
+  // Announce before persisting drawnAt: a failed post must stay re-drawable instead of
+  // sealing the raffle as drawn with no winners ever announced.
+  await postWinners({ ...raffle, winners, drawnAt }, reason);
+  const drawn = await store.setRaffleWinners(guildId, raffleKey, winners, drawnAt);
   if (!drawn) return undefined;
-  await postWinners(drawn, reason);
   return drawn;
 }
 
 async function postWinners(raffle: Raffle, reason: "manual" | "automatic") {
   const channel = await client.channels.fetch(raffle.winnerChannelId).catch(() => null);
-  if (!channel?.isTextBased() || !("send" in channel)) return;
+  if (!channel) throw Error("Winner channel " + raffle.winnerChannelId + " for raffle " + raffle.key + " could not be fetched. It may be deleted or hidden from the bot.");
+  if (!channel.isTextBased() || !("send" in channel)) throw Error("Winner channel " + raffle.winnerChannelId + " for raffle " + raffle.key + " is not a text channel the bot can post in.");
   await channel.send({ embeds: [winnerEmbed(raffle, reason)] });
 }
 

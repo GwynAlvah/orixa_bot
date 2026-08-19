@@ -177,6 +177,14 @@ export class VerificationStore {
     return Object.values(this.data.raffles[guildId] ?? {}).map(cloneRaffle);
   }
 
+  listGuildIdsWithRaffles() {
+    return Object.keys(this.data.raffles).filter((guildId) => Object.keys(this.data.raffles[guildId] ?? {}).length > 0);
+  }
+
+  listDrawnRaffles(guildId: string) {
+    return this.listRaffles(guildId).filter((r) => Boolean(r.drawnAt));
+  }
+
   listActiveRaffles(guildId: string) {
     return this.listRaffles(guildId).filter((r) => !r.drawnAt);
   }

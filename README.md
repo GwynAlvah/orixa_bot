@@ -7,7 +7,9 @@ The bot verifies an OpenSea profile challenge, reads Orixa ERC-721 ownership dir
 1. Create a Discord bot and invite it with bot and applications.commands scopes.
 2. Give it View Channels, Send Messages, Embed Links, and Manage Roles.
 3. Place its bot role above every holder role.
-4. Copy the variables from .env.example into .env and fill them in.
+4. Copy the variables from .env.example into .env and fill them in. If the bot serves more than one
+   server, set `DISCORD_GUILD_IDS` to a comma separated list so `npm run deploy:commands` registers
+   the slash commands in each of them.
 5. Obtain an OpenSea API key.
 6. Install and run:
 
@@ -80,7 +82,20 @@ Admins can draw manually:
 
 The command shows a dropdown of active raffles. Drawing saves winners permanently and posts them to the raffle winner channel. If a raffle has a duration and is already manually drawn, the automatic end-time draw will not draw winners again.
 
-Automatic drawing runs for raffles with a duration when their end time is reached.
+Automatic drawing runs for raffles with a duration when their end time is reached. The automatic
+draw covers every server the bot has raffles in, not just `DISCORD_GUILD_ID`.
+
+Winners are posted to the winner channel *before* the raffle is recorded as drawn. If the post
+fails, for example because the winner channel was deleted or the bot lost View Channel, Send
+Messages, or Embed Links there, the raffle stays undrawn so it can be drawn again once the channel
+is fixed. The failure is logged to the console.
+
+If a raffle is already recorded as drawn but its winners were never posted, admins can re-post them:
+
+    /announce-winners
+
+The command shows a dropdown of drawn raffles and posts the winner embed to that raffle's winner
+channel again. It never re-picks winners, so the saved winners stay the same.
 
 Admins can export ended or drawn raffle data:
 
