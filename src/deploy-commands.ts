@@ -80,10 +80,10 @@ const configureRaffle = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .setDMPermission(false)
   .addChannelOption((o) =>
-    o.setName("announce-channel").setDescription("Default raffle announce channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+    o.setName("announce-channel").setDescription("Default raffle announce channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(false),
   )
   .addChannelOption((o) =>
-    o.setName("winner-channel").setDescription("Default raffle winner channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+    o.setName("winner-channel").setDescription("Default raffle winner channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(false),
   );
 
 const setupRaffle = new SlashCommandBuilder()
@@ -95,10 +95,10 @@ const setupRaffle = new SlashCommandBuilder()
   .addIntegerOption((o) => o.setName("winners").setDescription("Number of winners").setMinValue(1).setMaxValue(100).setRequired(true))
   .addStringOption((o) => o.setName("duration").setDescription("Optional duration like 1d, 1hr, 10min, 10sec").setRequired(false))
   .addChannelOption((o) =>
-    o.setName("announce-channel").setDescription("Override raffle announce channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+    o.setName("announce-channel").setDescription("Override raffle announce channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(false),
   )
   .addChannelOption((o) =>
-    o.setName("winner-channel").setDescription("Override raffle winner channel").addChannelTypes(ChannelType.GuildText).setRequired(false),
+    o.setName("winner-channel").setDescription("Override raffle winner channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(false),
   )
   .addStringOption((o) =>
     o.setName("allow-roles").setDescription("Optional role mentions or IDs allowed to enter").setRequired(false),

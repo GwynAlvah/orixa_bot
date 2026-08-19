@@ -65,13 +65,30 @@ client.on(Events.InteractionCreate, async (i) => {
   try {
     await handle(i);
   } catch (e) {
-    console.error(e);
-    if (i.isRepliable()) {
-      const x = { content: "Action failed. Try again later.", flags: MessageFlags.Ephemeral as const };
+    console.error("Interaction failed: " + describeInteraction(i), e);
+    if (!i.isRepliable()) return;
+    // Show admins the real reason. A bare "try again later" gave them nothing to act on, and
+    // the underlying error was only ever visible in the bot host's console.
+    const detail = e instanceof Error ? e.message : String(e);
+    const content = clampReply(
+      isGuildAdmin(i)
+        ? "Action failed: " + detail
+        : "Action failed. Try again later.",
+    );
+    const x = { content, flags: MessageFlags.Ephemeral as const };
+    try {
       i.replied || i.deferred ? await i.followUp(x) : await i.reply(x);
+    } catch (replyError) {
+      console.error("Could not report the failure back to Discord", replyError);
     }
   }
 });
+
+function describeInteraction(i: Interaction) {
+  if (i.isChatInputCommand()) return "command /" + i.commandName;
+  if (i.isButton() || i.isStringSelectMenu() || i.isModalSubmit()) return "component " + i.customId;
+  return "interaction type " + i.type;
+}
 
 async function handle(i: Interaction) {
   if (i.isChatInputCommand() && i.commandName === "setup-verification") return handleSetupVerification(i);
@@ -345,8 +362,8 @@ async function handleWalletSubmitModal(i: Interaction) {
 async function handleConfigureRaffle(i: Interaction) {
   if (!i.isChatInputCommand()) return;
   if (!isGuildAdmin(i)) return i.reply({ content: "Manage Server permission is required.", flags: MessageFlags.Ephemeral });
-  const announce = i.options.getChannel("announce-channel", false, [ChannelType.GuildText]);
-  const winner = i.options.getChannel("winner-channel", false, [ChannelType.GuildText]);
+  const announce = i.options.getChannel("announce-channel", false, POSTABLE_CHANNEL_TYPES);
+  const winner = i.options.getChannel("winner-channel", false, POSTABLE_CHANNEL_TYPES);
   if (!announce && !winner) return i.reply({ content: "Set at least one default channel.", flags: MessageFlags.Ephemeral });
   if (announce) {
     const missing = missingChannelPermissions(i.guild!, announce.id);
@@ -369,8 +386,8 @@ async function handleSetupRaffle(i: Interaction) {
   if (!raffleKey) return i.reply({ content: "Use a raffle name with letters, numbers, dashes, or underscores.", flags: MessageFlags.Ephemeral });
   const winnerCount = i.options.getInteger("winners", true);
   const defaults = store.getRaffleConfig(i.guildId!);
-  const announceChannel = i.options.getChannel("announce-channel", false, [ChannelType.GuildText]);
-  const winnerChannel = i.options.getChannel("winner-channel", false, [ChannelType.GuildText]);
+  const announceChannel = i.options.getChannel("announce-channel", false, POSTABLE_CHANNEL_TYPES);
+  const winnerChannel = i.options.getChannel("winner-channel", false, POSTABLE_CHANNEL_TYPES);
   const announceChannelId = announceChannel?.id ?? defaults.announceChannelId;
   const winnerChannelId = winnerChannel?.id ?? defaults.winnerChannelId;
   if (!announceChannelId) return i.reply({ content: "Set `announce-channel` or configure a default with `/configure-raffle`.", flags: MessageFlags.Ephemeral });
@@ -479,10 +496,10 @@ async function handleDrawRaffleSelect(i: Interaction) {
     raffle = await drawRaffle(i.guildId!, raffleKey, "manual");
   } catch (e) {
     console.error("Manual draw failed for raffle " + raffleKey, e);
-    return i.editReply({ content: "Winners were not announced and the raffle is still undrawn, so you can retry. " + (e instanceof Error ? e.message : String(e)), components: [] });
+    return i.editReply({ content: clampReply("Winners were not announced and the raffle is still undrawn, so you can retry. " + (e instanceof Error ? e.message : String(e))), components: [] });
   }
   if (!raffle) return i.editReply({ content: "Raffle `" + raffleKey + "` is not configured.", components: [] });
-  await i.editReply({ content: drawSummary(raffle), components: [] });
+  await i.editReply({ content: clampReply(drawSummary(raffle)), components: [] });
 }
 
 async function handleExportRaffleEntriesSelect(i: Interaction) {
@@ -520,7 +537,10 @@ async function handleDeleteRaffleSelect(i: Interaction) {
 async function handleAnnounceWinnersCommand(i: Interaction) {
   if (!i.isChatInputCommand()) return;
   if (!isGuildAdmin(i)) return i.reply({ content: "Manage Server permission is required.", flags: MessageFlags.Ephemeral });
-  const override = i.options.getChannel("winner-channel", false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
+  const override = i.options.getChannel("winner-channel", false);
+  if (override && !POSTABLE_CHANNEL_TYPES.includes(override.type)) {
+    return i.reply({ content: "<#" + override.id + "> is a " + ChannelType[override.type] + " channel. Pick a text or announcement channel.", flags: MessageFlags.Ephemeral });
+  }
   const customId = override ? RAFFLE_ANNOUNCE_SELECT + ":" + override.id : RAFFLE_ANNOUNCE_SELECT;
   const prompt = override
     ? "Select a drawn raffle to re-post its winners into <#" + override.id + ">."
@@ -543,11 +563,11 @@ async function handleAnnounceWinnersSelect(i: Interaction) {
     await postWinners(raffle, "manual", channelId);
   } catch (e) {
     console.error("Failed to announce winners for raffle " + raffleKey, e);
-    return i.editReply({ content: "Winners were not posted. " + (e instanceof Error ? e.message : String(e)), components: [] });
+    return i.editReply({ content: clampReply("Winners were not posted. " + (e instanceof Error ? e.message : String(e))), components: [] });
   }
   // The saved channel was unreachable or wrong, so keep the working one for future posts.
   if (override && override !== raffle.winnerChannelId) await store.setRaffleWinnerChannel(i.guildId!, raffleKey, override);
-  await i.editReply({ content: "Announced winners for `" + raffleKey + "` in <#" + channelId + ">. " + drawSummary(raffle), components: [] });
+  await i.editReply({ content: clampReply("Announced winners for `" + raffleKey + "` in <#" + channelId + ">. " + drawSummary(raffle)), components: [] });
 }
 
 async function drawEndedRaffles() {
@@ -787,7 +807,23 @@ async function replyRaffleSelect(i: Interaction, raffles: Raffle[], customId: st
 
 function drawSummary(raffle: Raffle) {
   if (!raffle.winners.length) return "Raffle `" + raffle.key + "` was drawn, but there were no entries.";
-  return "Raffle `" + raffle.key + "` winners: " + raffle.winners.map((w) => "<@" + w.discordUserId + ">").join(", ");
+  const mentions = raffle.winners.map((w) => "<@" + w.discordUserId + ">");
+  const head = "Raffle `" + raffle.key + "` winners: ";
+  const shown: string[] = [];
+  let used = head.length;
+  for (const mention of mentions) {
+    if (used + mention.length + 2 > 1500) break;
+    used += mention.length + 2;
+    shown.push(mention);
+  }
+  const omitted = mentions.length - shown.length;
+  return head + shown.join(", ") + (omitted > 0 ? " and " + omitted + " more (see `/export-winners`)" : "");
+}
+
+// Discord rejects a message body over 2000 characters. An overlong reply would throw past the
+// handler's own error handling and surface as the generic "Action failed" message.
+function clampReply(content: string) {
+  return content.length > 1900 ? content.slice(0, 1900) + "… (truncated, see bot logs)" : content;
 }
 
 async function replyCsv(i: Interaction, content: string, filename: string, rows: string[][], update = false) {
@@ -818,6 +854,8 @@ function parseDurationMs(input: string) {
 function isGuildAdmin(i: Interaction) {
   return Boolean(i.inGuild() && i.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
 }
+
+const POSTABLE_CHANNEL_TYPES: ChannelType[] = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
 
 const REQUIRED_POST_PERMISSIONS: Array<[bigint, string]> = [
   [PermissionFlagsBits.ViewChannel, "View Channel"],
