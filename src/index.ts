@@ -455,7 +455,7 @@ async function handleRaffleEnter(i: Interaction) {
   if (!memberHasAnyRole(i.member, raffle.allowedRoleIds)) return i.reply({ content: "You do not have an allowed role for this raffle.", flags: MessageFlags.Ephemeral });
   const wallet = store.getRaffleWallet(i.guildId!, i.user.id);
   if (!wallet) return i.reply({ content: "Set your raffle wallet first with `/set-raffle-wallet`.", flags: MessageFlags.Ephemeral });
-  const updated = await store.addRaffleEntry(i.guildId!, raffleKey, { discordUserId: i.user.id, discordUsername: i.user.tag, walletAddress: wallet, enteredAt: Date.now() });
+  const updated = await store.addRaffleEntry(i.guildId!, raffleKey, { discordUserId: i.user.id, discordUsername: i.user.username, walletAddress: wallet, enteredAt: Date.now() });
   if (updated) await refreshRaffleAnnounceMessage(updated);
   await i.reply({ content: "Entered raffle `" + raffleKey + "` with wallet `" + wallet + "`.", flags: MessageFlags.Ephemeral });
 }
@@ -743,7 +743,11 @@ async function refreshRaffleAnnounceMessage(raffle: Raffle) {
 function winnerEmbed(raffle: Raffle, reason: "manual" | "automatic") {
   const entrantCount = Object.keys(raffle.entries).length;
   const drawnAt = raffle.drawnAt ?? Date.now();
-  const lines = raffle.winners.map((w, idx) => "**" + (idx + 1) + ".** <@" + w.discordUserId + ">\n`" + w.walletAddress + "`");
+  const lines = raffle.winners.map((w, idx) => {
+    const name = entryUsername(w);
+    const who = "<@" + w.discordUserId + ">" + (name ? " (@" + name + ")" : "");
+    return "**" + (idx + 1) + ".** " + who + "\n`" + w.walletAddress + "`";
+  });
   // Discord rejects a description over 4096 characters, which would fail the whole announcement.
   // Trim the list rather than lose the post; /export-winners still has every winner.
   const shown: string[] = [];
@@ -803,6 +807,11 @@ async function replyRaffleSelect(i: Interaction, raffles: Raffle[], customId: st
   const select = new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder("Select raffle").addOptions(options);
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
   await i.reply({ content: prompt, components: [row], flags: MessageFlags.Ephemeral });
+}
+
+// Entries saved before the username migration hold a "name#0" tag; show just the name.
+function entryUsername(entry: RaffleEntry) {
+  return entry.discordUsername.replace(/#0$/, "").trim();
 }
 
 function drawSummary(raffle: Raffle) {
