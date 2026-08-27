@@ -624,59 +624,36 @@ async function postWinners(raffle: Raffle, reason: "manual" | "automatic", chann
     }
   }
 
-  // Mentions inside an embed only render as @username when the viewing client already has that
-  // user resolved, so uncached winners showed as a raw <@id>. Repeating the mentions in the
-  // message content makes Discord attach the resolved users to the message, which fixes the
-  // embed rendering for everyone.
-  const winnerIds = [...new Set(raffle.winners.map((w) => w.discordUserId))];
-  const content = winnerMentionContent(winnerIds);
+  const lines = raffle.winners.map((w, idx) => winnerLine(w, idx + 1));
+  // Message content caps at 2000 characters, so the list goes out as several messages.
+  const pages = paginateLines(lines, 1900);
 
-  // Discord caps a message at 10 embeds and 6000 characters across them, so long winner lists
-  // go out as several messages. Only the first carries the mentions and pings.
-  const batches = batchEmbeds(winnerEmbeds(raffle, reason));
   try {
-    for (const [index, embeds] of batches.entries()) {
-      await channel.send({
-        content: index === 0 ? content : undefined,
-        embeds,
-        allowedMentions: index === 0 ? { users: winnerIds.slice(0, 100) } : { parse: [] },
-      });
+    await channel.send({ embeds: [winnerEmbed(raffle, reason)], allowedMentions: { parse: [] } });
+    for (const page of pages) {
+      const ids = [...page.matchAll(/<@(\d+)>/g)].map((m) => m[1]!);
+      await channel.send({ content: page, allowedMentions: { users: ids.slice(0, 100) } });
     }
   } catch (e) {
     throw Error("Discord rejected the winners message for <#" + channelId + ">: " + describeDiscordError(e));
   }
 }
 
-function batchEmbeds(embeds: EmbedBuilder[]) {
-  const batches: EmbedBuilder[][] = [];
-  let current: EmbedBuilder[] = [];
+function paginateLines(lines: string[], max: number) {
+  const pages: string[] = [];
+  let current: string[] = [];
   let used = 0;
-  for (const embed of embeds) {
-    const size = JSON.stringify(embed.toJSON()).length;
-    if (current.length && (current.length >= 10 || used + size > 5000)) {
-      batches.push(current);
+  for (const line of lines) {
+    if (current.length && used + line.length + 1 > max) {
+      pages.push(current.join("\n"));
       current = [];
       used = 0;
     }
-    used += size;
-    current.push(embed);
+    used += line.length + 1;
+    current.push(line);
   }
-  if (current.length) batches.push(current);
-  return batches;
-}
-
-function winnerMentionContent(winnerIds: string[]) {
-  if (!winnerIds.length) return undefined;
-  const head = "Congratulations ";
-  const mentions: string[] = [];
-  let used = head.length;
-  for (const id of winnerIds) {
-    const mention = "<@" + id + ">";
-    if (used + mention.length + 1 > 1900) break;
-    used += mention.length + 1;
-    mentions.push(mention);
-  }
-  return head + mentions.join(" ");
+  if (current.length) pages.push(current.join("\n"));
+  return pages;
 }
 
 function describeDiscordError(e: unknown) {
@@ -788,55 +765,39 @@ async function refreshRaffleAnnounceMessage(raffle: Raffle) {
   await message.edit({ embeds: [raffleEmbed(raffle)], components: raffleRows(raffle) }).catch(() => undefined);
 }
 
-// Returns one embed per page. A single embed description caps at 4096 characters, so a long
-// winner list is split across embeds rather than trimmed — every winner is always shown.
-function winnerEmbeds(raffle: Raffle, reason: "manual" | "automatic") {
+// Header only. The winner list lives in plain message content because a mention inside an embed
+// renders as a raw <@id> unless the viewing client already has that user cached, while a mention
+// in message content is always resolved by Discord.
+function winnerEmbed(raffle: Raffle, reason: "manual" | "automatic") {
   const entrantCount = Object.keys(raffle.entries).length;
   const drawnAt = raffle.drawnAt ?? Date.now();
-  const lines = raffle.winners.map((w, idx) => "**" + (idx + 1) + ".** <@" + w.discordUserId + ">");
-  const pages = paginateLines(lines, 3500);
-  if (!pages.length) pages.push("No valid entries were available, so no winners were selected.");
-
-  return pages.map((page, index) => {
-    const embed = new EmbedBuilder().setColor(0xe91e63);
-    if (index === 0) {
-      embed
-        .setTitle("🏆 Orixa Raffle Winners — " + raffle.name)
-        .setDescription("The raffle has been drawn. Congratulations to the winners.\n\n" + page);
-    } else {
-      embed.setTitle("🏆 " + raffle.name + " — winners continued").setDescription(page);
-    }
-    if (index === pages.length - 1) {
-      embed
-        .addFields(
-          { name: "🎟️ Raffle", value: "`" + raffle.key + "`", inline: true },
-          { name: "👥 Entrants", value: String(entrantCount), inline: true },
-          { name: "🏆 Winners", value: String(raffle.winners.length) + " / " + raffle.winnerCount, inline: true },
-          { name: "⚙️ Draw type", value: reason === "automatic" ? "Automatic" : "Manual", inline: true },
-          { name: "🕒 Drawn", value: discordTime(drawnAt) + " (" + discordRelative(drawnAt) + ")", inline: true },
-        )
-        .setFooter({ text: "Admins can run /export-winners for the winner wallet addresses. Never share seed phrases or private keys." });
-    }
-    return embed;
-  });
+  return new EmbedBuilder()
+    .setColor(0xe91e63)
+    .setTitle("🏆 Orixa Raffle Winners — " + raffle.name)
+    .setDescription(
+      raffle.winners.length
+        ? "The raffle has been drawn. Congratulations to the winners listed below."
+        : "The raffle has been drawn. No valid entries were available, so no winners were selected.",
+    )
+    .addFields(
+      { name: "🎟️ Raffle", value: "`" + raffle.key + "`", inline: true },
+      { name: "👥 Entrants", value: String(entrantCount), inline: true },
+      { name: "🏆 Winners", value: String(raffle.winners.length) + " / " + raffle.winnerCount, inline: true },
+      { name: "⚙️ Draw type", value: reason === "automatic" ? "Automatic" : "Manual", inline: true },
+      { name: "🕒 Drawn", value: discordTime(drawnAt) + " (" + discordRelative(drawnAt) + ")", inline: true },
+    )
+    .setFooter({ text: "Admins can run /export-winners for the winner wallet addresses. Never share seed phrases or private keys." });
 }
 
-function paginateLines(lines: string[], max: number) {
-  const pages: string[] = [];
-  let current: string[] = [];
-  let used = 0;
-  for (const line of lines) {
-    if (current.length && used + line.length + 1 > max) {
-      pages.push(current.join("\n"));
-      current = [];
-      used = 0;
-    }
-    used += line.length + 1;
-    current.push(line);
-  }
-  if (current.length) pages.push(current.join("\n"));
-  return pages;
+function winnerLine(entry: RaffleEntry, position: number) {
+  const head = "**" + position + ".** ";
+  // A winner saved without a usable id would render as an empty <@>. Fall back to the stored
+  // username so the position is never blank.
+  if (/^\d{15,25}$/.test(entry.discordUserId)) return head + "<@" + entry.discordUserId + ">";
+  const name = entry.discordUsername.replace(/#0$/, "").trim();
+  return head + (name ? "@" + name : "unknown entrant (`" + entry.walletAddress + "`)");
 }
+
 
 function raffleRows(raffle: Raffle) {
   const rows: ActionRowBuilder<ButtonBuilder>[] = [raffleEnterRow(raffle.key)];

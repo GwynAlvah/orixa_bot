@@ -433,6 +433,7 @@ function normalizeRaffles(input: unknown): Record<string, Record<string, Raffle>
     for (const [key, raffleValue] of Object.entries(value as Record<string, unknown>)) {
       if (!raffleValue || typeof raffleValue !== "object") continue;
       const r = raffleValue as Record<string, unknown>;
+      const entries = normalizeRaffleEntries(r.entries);
       result[guildId][key] = {
         key: String(r.key ?? key),
         name: String(r.name ?? key),
@@ -446,12 +447,23 @@ function normalizeRaffles(input: unknown): Record<string, Record<string, Raffle>
         startsAt: Number(r.startsAt ?? Date.now()),
         endsAt: r.endsAt === null || r.endsAt === undefined ? null : Number(r.endsAt),
         drawnAt: r.drawnAt === null || r.drawnAt === undefined ? null : Number(r.drawnAt),
-        entries: normalizeRaffleEntries(r.entries),
-        winners: Array.isArray(r.winners) ? r.winners.map((winner) => normalizeRaffleEntry(winner)).filter((e): e is RaffleEntry => Boolean(e)) : [],
+        entries,
+        // Winners carry no keyed fallback, so a record missing discordUserId used to normalize to
+        // an empty id and render as a blank line. Recover it from the matching entry by wallet.
+        winners: Array.isArray(r.winners)
+          ? r.winners
+              .map((winner) => normalizeRaffleEntry(winner))
+              .filter((e): e is RaffleEntry => Boolean(e))
+              .map((winner) => (winner.discordUserId ? winner : { ...winner, ...findEntryByWallet(entries, winner.walletAddress) }))
+          : [],
       };
     }
   }
   return result;
+}
+
+function findEntryByWallet(entries: Record<string, RaffleEntry>, walletAddress: string) {
+  return Object.values(entries).find((e) => e.walletAddress === walletAddress);
 }
 
 function normalizeRaffleEntries(input: unknown): Record<string, RaffleEntry> {
