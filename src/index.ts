@@ -624,11 +624,36 @@ async function postWinners(raffle: Raffle, reason: "manual" | "automatic", chann
     }
   }
 
+  // Mentions inside an embed only render as @username when the viewing client already has that
+  // user resolved, so uncached winners showed as a raw <@id>. Repeating the mentions in the
+  // message content makes Discord attach the resolved users to the message, which fixes the
+  // embed rendering for everyone.
+  const winnerIds = [...new Set(raffle.winners.map((w) => w.discordUserId))];
+  const content = winnerMentionContent(winnerIds);
+
   try {
-    await channel.send({ embeds: [winnerEmbed(raffle, reason)] });
+    await channel.send({
+      content,
+      embeds: [winnerEmbed(raffle, reason)],
+      allowedMentions: { users: winnerIds.slice(0, 100) },
+    });
   } catch (e) {
     throw Error("Discord rejected the winners message for <#" + channelId + ">: " + describeDiscordError(e));
   }
+}
+
+function winnerMentionContent(winnerIds: string[]) {
+  if (!winnerIds.length) return undefined;
+  const head = "Congratulations ";
+  const mentions: string[] = [];
+  let used = head.length;
+  for (const id of winnerIds) {
+    const mention = "<@" + id + ">";
+    if (used + mention.length + 1 > 1900) break;
+    used += mention.length + 1;
+    mentions.push(mention);
+  }
+  return head + mentions.join(" ");
 }
 
 function describeDiscordError(e: unknown) {
