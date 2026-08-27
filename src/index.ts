@@ -631,15 +631,38 @@ async function postWinners(raffle: Raffle, reason: "manual" | "automatic", chann
   const winnerIds = [...new Set(raffle.winners.map((w) => w.discordUserId))];
   const content = winnerMentionContent(winnerIds);
 
+  // Discord caps a message at 10 embeds and 6000 characters across them, so long winner lists
+  // go out as several messages. Only the first carries the mentions and pings.
+  const batches = batchEmbeds(winnerEmbeds(raffle, reason));
   try {
-    await channel.send({
-      content,
-      embeds: [winnerEmbed(raffle, reason)],
-      allowedMentions: { users: winnerIds.slice(0, 100) },
-    });
+    for (const [index, embeds] of batches.entries()) {
+      await channel.send({
+        content: index === 0 ? content : undefined,
+        embeds,
+        allowedMentions: index === 0 ? { users: winnerIds.slice(0, 100) } : { parse: [] },
+      });
+    }
   } catch (e) {
     throw Error("Discord rejected the winners message for <#" + channelId + ">: " + describeDiscordError(e));
   }
+}
+
+function batchEmbeds(embeds: EmbedBuilder[]) {
+  const batches: EmbedBuilder[][] = [];
+  let current: EmbedBuilder[] = [];
+  let used = 0;
+  for (const embed of embeds) {
+    const size = JSON.stringify(embed.toJSON()).length;
+    if (current.length && (current.length >= 10 || used + size > 5000)) {
+      batches.push(current);
+      current = [];
+      used = 0;
+    }
+    used += size;
+    current.push(embed);
+  }
+  if (current.length) batches.push(current);
+  return batches;
 }
 
 function winnerMentionContent(winnerIds: string[]) {
@@ -765,44 +788,54 @@ async function refreshRaffleAnnounceMessage(raffle: Raffle) {
   await message.edit({ embeds: [raffleEmbed(raffle)], components: raffleRows(raffle) }).catch(() => undefined);
 }
 
-function winnerEmbed(raffle: Raffle, reason: "manual" | "automatic") {
+// Returns one embed per page. A single embed description caps at 4096 characters, so a long
+// winner list is split across embeds rather than trimmed — every winner is always shown.
+function winnerEmbeds(raffle: Raffle, reason: "manual" | "automatic") {
   const entrantCount = Object.keys(raffle.entries).length;
   const drawnAt = raffle.drawnAt ?? Date.now();
-  const lines = raffle.winners.map((w, idx) => {
-    const name = entryUsername(w);
-    const who = "<@" + w.discordUserId + ">" + (name ? " (@" + name + ")" : "");
-    return "**" + (idx + 1) + ".** " + who + "\n`" + w.walletAddress + "`";
+  const lines = raffle.winners.map((w, idx) => "**" + (idx + 1) + ".** <@" + w.discordUserId + ">");
+  const pages = paginateLines(lines, 3500);
+  if (!pages.length) pages.push("No valid entries were available, so no winners were selected.");
+
+  return pages.map((page, index) => {
+    const embed = new EmbedBuilder().setColor(0xe91e63);
+    if (index === 0) {
+      embed
+        .setTitle("🏆 Orixa Raffle Winners — " + raffle.name)
+        .setDescription("The raffle has been drawn. Congratulations to the winners.\n\n" + page);
+    } else {
+      embed.setTitle("🏆 " + raffle.name + " — winners continued").setDescription(page);
+    }
+    if (index === pages.length - 1) {
+      embed
+        .addFields(
+          { name: "🎟️ Raffle", value: "`" + raffle.key + "`", inline: true },
+          { name: "👥 Entrants", value: String(entrantCount), inline: true },
+          { name: "🏆 Winners", value: String(raffle.winners.length) + " / " + raffle.winnerCount, inline: true },
+          { name: "⚙️ Draw type", value: reason === "automatic" ? "Automatic" : "Manual", inline: true },
+          { name: "🕒 Drawn", value: discordTime(drawnAt) + " (" + discordRelative(drawnAt) + ")", inline: true },
+        )
+        .setFooter({ text: "Admins can run /export-winners for the winner wallet addresses. Never share seed phrases or private keys." });
+    }
+    return embed;
   });
-  // Discord rejects a description over 4096 characters, which would fail the whole announcement.
-  // Trim the list rather than lose the post; /export-winners still has every winner.
-  const shown: string[] = [];
+}
+
+function paginateLines(lines: string[], max: number) {
+  const pages: string[] = [];
+  let current: string[] = [];
   let used = 0;
   for (const line of lines) {
-    if (used + line.length + 2 > 3600) break;
-    used += line.length + 2;
-    shown.push(line);
+    if (current.length && used + line.length + 1 > max) {
+      pages.push(current.join("\n"));
+      current = [];
+      used = 0;
+    }
+    used += line.length + 1;
+    current.push(line);
   }
-  const omitted = lines.length - shown.length;
-  const winners = lines.length
-    ? shown.join("\n\n") + (omitted > 0 ? "\n\n…and " + omitted + " more. Use `/export-winners` for the full list." : "")
-    : "No valid entries were available, so no winners were selected.";
-
-  return new EmbedBuilder()
-    .setColor(0xe91e63)
-    .setTitle("🏆 Orixa Raffle Winners — " + raffle.name)
-    .setDescription([
-      "The raffle has been drawn. Congratulations to the winners.",
-      "",
-      winners,
-    ].join("\n"))
-    .addFields(
-      { name: "🎟️ Raffle", value: "`" + raffle.key + "`", inline: true },
-      { name: "👥 Entrants", value: String(entrantCount), inline: true },
-      { name: "🏆 Winners", value: String(raffle.winners.length) + " / " + raffle.winnerCount, inline: true },
-      { name: "⚙️ Draw type", value: reason === "automatic" ? "Automatic" : "Manual", inline: true },
-      { name: "🕒 Drawn", value: discordTime(drawnAt) + " (" + discordRelative(drawnAt) + ")", inline: true },
-    )
-    .setFooter({ text: "Winner wallet addresses are shown for admin verification. Never share seed phrases or private keys." });
+  if (current.length) pages.push(current.join("\n"));
+  return pages;
 }
 
 function raffleRows(raffle: Raffle) {
@@ -832,11 +865,6 @@ async function replyRaffleSelect(i: Interaction, raffles: Raffle[], customId: st
   const select = new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder("Select raffle").addOptions(options);
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
   await i.reply({ content: prompt, components: [row], flags: MessageFlags.Ephemeral });
-}
-
-// Entries saved before the username migration hold a "name#0" tag; show just the name.
-function entryUsername(entry: RaffleEntry) {
-  return entry.discordUsername.replace(/#0$/, "").trim();
 }
 
 function drawSummary(raffle: Raffle) {
