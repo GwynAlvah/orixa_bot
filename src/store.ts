@@ -193,6 +193,17 @@ export class VerificationStore {
     return this.listRaffles(guildId).filter((r) => Boolean(r.drawnAt) || Boolean(r.endsAt && r.endsAt <= now));
   }
 
+  // Setups store the contract they were created with. When the configured collection changes,
+  // move existing setups over so admins do not have to re-run /setup-verification.
+  async migrateGuildSetupContracts(contractAddress: string) {
+    const stale = Object.values(this.data.guildSetups).filter((s) => s.contractAddress !== contractAddress);
+    if (!stale.length) return [];
+    const moved = stale.map((s) => s.contractAddress);
+    for (const setup of stale) setup.contractAddress = contractAddress;
+    await this.save();
+    return moved;
+  }
+
   async setGuildSetup(id: string, s: GuildSetup) {
     this.data.guildSetups[id] = s;
     await this.save();

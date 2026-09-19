@@ -47,10 +47,12 @@ const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const store = new VerificationStore("data/verifications.json");
 const openSea = new OpenSeaClient(config.openSeaApiKey, "", "");
-const chain = new ArcClient(config.arcTestnetRpcUrl);
+const chain = new ArcClient(config.arcRpcUrl);
 
 client.once(Events.ClientReady, (c) => {
   console.log("Logged in as " + c.user.tag);
+  checkArcNetwork().catch((e) => console.error("Could not reach the Arc RPC at " + config.arcRpcUrl, e));
+  migrateGuildSetupContracts().catch((e) => console.error("Could not migrate guild setups to the configured contract", e));
   if (config.holderRoleSyncIntervalMs > 0) {
     setInterval(() => {
       syncHolderRoles("automatic").catch((e) => console.error("Holder role sync failed", e));
@@ -121,6 +123,24 @@ async function handle(i: Interaction) {
   if (i.isStringSelectMenu() && i.customId.startsWith(RAFFLE_ANNOUNCE_SELECT)) return handleAnnounceWinnersSelect(i);
 }
 
+// Pointing at the wrong network fails every verification with a confusing on-chain error, so
+// say so plainly at startup rather than once per user.
+async function checkArcNetwork() {
+  const chainId = await chain.chainId();
+  if (chainId !== config.arcChainId) {
+    console.error("Arc RPC " + config.arcRpcUrl + " reports chain " + chainId + ", expected " + config.arcChainId + ". Holder verification will not work until this matches.");
+    return;
+  }
+  console.log("Arc RPC " + config.arcRpcUrl + " on chain " + chainId + ", collection " + config.orixaContractAddress);
+}
+
+async function migrateGuildSetupContracts() {
+  const moved = await store.migrateGuildSetupContracts(config.orixaContractAddress);
+  for (const previous of moved) {
+    console.log("Moved a guild verification setup from " + previous + " to " + config.orixaContractAddress);
+  }
+}
+
 async function handleSetupVerification(i: Interaction) {
   if (!i.isChatInputCommand()) return;
   if (!isGuildAdmin(i)) return i.reply({ content: "Manage Server permission is required.", flags: MessageFlags.Ephemeral });
@@ -168,7 +188,7 @@ async function handleSetupVerification(i: Interaction) {
         "Add the temporary code to your OpenSea profile bio, then confirm.",
         "",
         "**Contract**: " + contract,
-        "**Arc Testnet**",
+        "**Arc Mainnet** (chain " + config.arcChainId + ")",
         "",
         "**Role tiers**",
         lines,

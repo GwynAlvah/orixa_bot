@@ -1,6 +1,23 @@
 # Orixa Discord NFT verification bot
 
-The bot verifies an OpenSea profile challenge, reads Orixa ERC-721 ownership directly from Arc Testnet, and grants configured Discord role tiers.
+The bot verifies an OpenSea profile challenge, reads Orixa ERC-721 ownership directly from Arc
+mainnet, and grants configured Discord role tiers.
+
+## Collection
+
+Holder verification reads the ORIXIANS Genesis collection on Arc mainnet:
+
+- Contract: `0x525f3d66c782e6f191213bdc031fd2b56c5c3a69`
+- Network: Arc mainnet, chain ID `5042`
+- RPC: `ARC_RPC_URL`, defaulting to `https://rpc.mainnet.arc.io`
+
+The bot checks the RPC's chain id at startup and logs an error if it does not match `ARC_CHAIN_ID`,
+because a wrong network fails every verification with a confusing on-chain error.
+
+Guild setups saved before this collection was configured are migrated to it automatically at
+startup, so `/setup-verification` does not need to be re-run to switch the contract. The posted
+verification panel still shows whichever contract it was created with, so re-run
+`/setup-verification` if you want the panel itself to show the current one.
 
 ## Setup
 
