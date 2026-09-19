@@ -38,6 +38,26 @@ Run /setup-verification and provide the target channel, and up to five role/coun
 
 Holder roles are resynced automatically every `HOLDER_ROLE_SYNC_INTERVAL_MINUTES` minutes. Set it to `0` to disable the automatic loop.
 
+The sync covers every server that has a verification setup, not just `DISCORD_GUILD_ID`.
+
+A member's holdings are summed across **all** the wallets they have verified, so a second empty
+wallet never costs them a role. If a member no longer meets a tier's threshold, that tier's role is
+removed; roles outside the configured tiers are never touched.
+
+### Rate limits and RPC failures
+
+- Each distinct wallet is read once per sync, shared across servers.
+- Reads run at most `ARC_RPC_CONCURRENCY` at a time (default 4).
+- Rate limits (HTTP 429, JSON-RPC `-32005`), 5xx responses, and network errors are retried up to
+  `ARC_RPC_MAX_ATTEMPTS` times with exponential backoff, honouring `Retry-After`. A genuine error
+  such as a reverted call is not retried.
+- If any of a member's wallets cannot be read, that member is skipped entirely rather than being
+  treated as holding zero, so a struggling RPC never strips roles from real holders.
+  `/resync-holder-roles` reports how many wallets were unreadable.
+
+Run `npm test` to exercise the role add/remove decisions, including the sold-out and
+partial-sale cases.
+
 Admins can also run `/resync-holder-roles` to manually recheck all verified wallets. If a verified wallet no longer holds enough Orixa NFTs, the bot removes the configured holder tier roles from that Discord member. If the wallet still qualifies, the bot adds/updates the correct tier roles.
 
 ## Wallet submissions

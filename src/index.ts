@@ -24,6 +24,7 @@ import {
 import { config } from "./config.js";
 import { OpenSeaClient } from "./opensea.js";
 import { ArcClient } from "./arc.js";
+import { groupWalletsByUser, HolderTier, mapWithConcurrency, plannedRoleChanges, totalHolding } from "./holders.js";
 import { Raffle, RaffleEntry, VerificationStore } from "./store.js";
 
 const VERIFY = "holder:verify";
@@ -47,7 +48,7 @@ const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const store = new VerificationStore("data/verifications.json");
 const openSea = new OpenSeaClient(config.openSeaApiKey, "", "");
-const chain = new ArcClient(config.arcRpcUrl);
+const chain = new ArcClient(config.arcRpcUrl, config.arcRpcMaxAttempts);
 
 client.once(Events.ClientReady, (c) => {
   console.log("Logged in as " + c.user.tag);
@@ -686,49 +687,106 @@ async function handleResyncHolderRoles(i: Interaction) {
   if (!isGuildAdmin(i)) return i.reply({ content: "Manage Server permission is required.", flags: MessageFlags.Ephemeral });
   await i.deferReply({ flags: MessageFlags.Ephemeral });
   const result = await syncHolderRoles("manual");
-  await i.editReply("Holder role sync complete. Checked " + result.checked + " wallet(s). Added roles for " + result.membersWithAdds + " member(s), removed roles from " + result.membersWithRemoves + " member(s), skipped " + result.skipped + ".");
+  const lines = [
+    "Holder role sync complete.",
+    "Checked **" + result.checked + "** member(s) across " + store.listGuildIdsWithSetups().length + " server(s).",
+    "Added roles for **" + result.membersWithAdds + "**, removed roles from **" + result.membersWithRemoves + "**, skipped **" + result.skipped + "**.",
+  ];
+  if (result.unreadable) {
+    lines.push("", "⚠️ **" + result.unreadable + "** wallet(s) could not be read from the Arc RPC, so their owners were left untouched rather than having roles removed. Run the command again once the RPC recovers.");
+  }
+  await i.editReply(clampReply(lines.join("\n")));
 }
 
 async function syncHolderRoles(reason: "manual" | "automatic") {
-  const setup = store.getGuildSetup(config.guildId);
+  const total = { checked: 0, skipped: 0, membersWithAdds: 0, membersWithRemoves: 0, unreadable: 0 };
   const verified = store.getVerifiedWallets();
-  const result = { checked: 0, skipped: 0, membersWithAdds: 0, membersWithRemoves: 0 };
-  if (!setup || !verified.length) return result;
+  if (!verified.length) return total;
 
-  const guild = await client.guilds.fetch(config.guildId);
+  // One balance read per distinct wallet, shared across guilds, so a wallet verified in two
+  // servers is not fetched twice.
+  const balances = await readWalletBalances([...new Set(verified.map((v) => v.walletAddress))]);
+  total.unreadable = [...balances.values()].filter((b) => b === undefined).length;
+
+  // Every guild with a setup is synced. Syncing only the configured guild left holders in any
+  // other server with roles they no longer qualify for.
+  for (const guildId of store.listGuildIdsWithSetups()) {
+    try {
+      const guildResult = await syncGuildHolderRoles(guildId, verified, balances, reason);
+      total.checked += guildResult.checked;
+      total.skipped += guildResult.skipped;
+      total.membersWithAdds += guildResult.membersWithAdds;
+      total.membersWithRemoves += guildResult.membersWithRemoves;
+    } catch (e) {
+      console.error("Holder role sync failed for guild " + guildId, e);
+    }
+  }
+  return total;
+}
+
+async function syncGuildHolderRoles(
+  guildId: string,
+  verified: Array<{ discordUserId: string; walletAddress: string }>,
+  balances: Map<string, number | undefined>,
+  reason: "manual" | "automatic",
+) {
+  const result = { checked: 0, skipped: 0, membersWithAdds: 0, membersWithRemoves: 0 };
+  const setup = store.getGuildSetup(guildId);
+  if (!setup) return result;
+
+  const guild = await client.guilds.fetch(guildId);
   await guild.roles.fetch();
   await guild.members.fetchMe();
-  const manageable = setup.tiers.filter((tier) => canManageRole(guild, tier.roleId));
-  const manageableRoleIds = new Set(manageable.map((tier) => tier.roleId));
+  const manageableRoleIds = new Set(setup.tiers.filter((tier) => canManageRole(guild, tier.roleId)).map((tier) => tier.roleId));
   const syncSetup = { ...setup, tiers: setup.tiers.filter((tier) => manageableRoleIds.has(tier.roleId)) };
-  if (!syncSetup.tiers.length) return { ...result, skipped: verified.length };
+  if (!syncSetup.tiers.length) {
+    console.error("No holder tier role in guild " + guildId + " is manageable. Move the bot role above the holder roles.");
+    return { ...result, skipped: verified.length };
+  }
 
-  for (const entry of verified) {
+  for (const [discordUserId, wallets] of groupWalletsByUser(verified)) {
     try {
-      const member = await guild.members.fetch(entry.discordUserId).catch(() => null);
+      // Never act on a partial reading; totalHolding returns undefined if any wallet failed.
+      const nftCount = totalHolding(wallets.map((wallet) => balances.get(wallet)));
+      if (nftCount === undefined) {
+        result.skipped++;
+        continue;
+      }
+      const member = await guild.members.fetch(discordUserId).catch(() => null);
       if (!member) {
         result.skipped++;
         continue;
       }
-      const count = await chain.balance(syncSetup.contractAddress, entry.walletAddress);
-      const memberResult = await syncMemberHolderRoles(member, syncSetup, count);
+      const memberResult = await syncMemberHolderRoles(member, syncSetup, nftCount);
       result.checked++;
       if (memberResult.added.length) result.membersWithAdds++;
       if (memberResult.removed.length) result.membersWithRemoves++;
     } catch (e) {
       result.skipped++;
-      console.error("Failed to sync holder roles for " + entry.discordUserId + " during " + reason + " sync", e);
+      console.error("Failed to sync holder roles for " + discordUserId + " in guild " + guildId + " during " + reason + " sync", e);
     }
   }
   return result;
 }
 
-async function syncMemberHolderRoles(member: GuildMember, setup: { tiers: Array<{ roleId: string; nftCount: number }> }, nftCount: number) {
-  const all = setup.tiers.map((t) => t.roleId);
-  const qualified = setup.tiers.filter((t) => nftCount >= t.nftCount);
-  const active = qualified.map((t) => t.roleId);
-  const add = active.filter((roleId) => !member.roles.cache.has(roleId));
-  const remove = all.filter((roleId) => member.roles.cache.has(roleId) && !active.includes(roleId));
+
+// undefined means the balance could not be read, which is deliberately different from zero.
+async function readWalletBalances(wallets: string[]) {
+  const balances = new Map<string, number | undefined>();
+  await mapWithConcurrency(wallets, config.arcRpcConcurrency, async (wallet) => {
+    try {
+      balances.set(wallet, await chain.balance(config.orixaContractAddress, wallet));
+    } catch (e) {
+      balances.set(wallet, undefined);
+      console.error("Could not read the Orixa balance of " + wallet, e);
+    }
+  });
+  return balances;
+}
+
+
+async function syncMemberHolderRoles(member: GuildMember, setup: { tiers: HolderTier[] }, nftCount: number) {
+  const { add, remove, active } = plannedRoleChanges(new Set(member.roles.cache.keys()), setup.tiers, nftCount);
   if (remove.length) await member.roles.remove(remove, "Orixa holder role resync");
   if (add.length) await member.roles.add(add, "Orixa holder role resync");
   return { added: add, removed: remove, active };

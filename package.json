@@ -9,7 +9,8 @@
     "build": "tsc",
     "start:prod": "node dist/index.js",
     "deploy:commands": "tsx src/deploy-commands.ts",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "discord.js": "^14.21.0",
